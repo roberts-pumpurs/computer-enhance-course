@@ -1,6 +1,6 @@
 use crate::instruction::Instruction;
 
-use super::{InstructionSet, Register};
+use super::{InstructionSet, Register, Wide};
 
 impl InstructionSet {
     pub fn from_decoded_asm_file(file_content: &str) -> Self {
@@ -44,43 +44,45 @@ impl Instruction {
 }
 
 impl Register {
-    pub fn from_chars(left: char, right: char) -> Register {
+    pub fn from_chars(left: char, right: char) -> (Register, Wide) {
+        let is_wide = matches!(right, 'x' | 'p' | 'i');
         match (left, right) {
-            ('a', 'l' | 'x') => Register::R000,
-            ('c', 'l' | 'x') => Register::R001,
-            ('d', 'l' | 'x') => Register::R010,
-            ('b', 'l' | 'x') => Register::R100,
-            ('a', 'h') | ('s', 'p') => Register::R011,
-            ('c', 'h') | ('b', 'p') => Register::R101,
-            ('d', 'h') | ('s', 'i') => Register::R110,
-            ('b', 'h') | ('d', 'i') => Register::R111,
+            ('a', 'l' | 'x') => (Register::AX, Wide(is_wide)),
+            ('c', 'l' | 'x') => (Register::CX, Wide(is_wide)),
+            ('d', 'l' | 'x') => (Register::DX, Wide(is_wide)),
+            ('b', 'l' | 'x') => (Register::BX, Wide(is_wide)),
+            ('a', 'h') | ('s', 'p') => (Register::SP, Wide(is_wide)),
+            ('c', 'h') | ('b', 'p') => (Register::BP, Wide(is_wide)),
+            ('d', 'h') | ('s', 'i') => (Register::SI, Wide(is_wide)),
+            ('b', 'h') | ('d', 'i') => (Register::DI, Wide(is_wide)),
             _ => {
                 panic!("unexpected chars")
             }
         }
     }
 
-    pub fn to_chars(&self, w: bool) -> (char, char) {
+    pub fn to_chars(&self, w: Wide) -> (char, char) {
+        let w = w.0;
         match (self, w) {
-            (Register::R000, false) => ('a', 'l'),
-            (Register::R000, true) => ('a', 'x'),
-            (Register::R001, false) => ('c', 'l'),
-            (Register::R001, true) => ('c', 'x'),
-            (Register::R010, false) => ('d', 'l'),
-            (Register::R010, true) => ('d', 'x'),
-            (Register::R100, false) => ('b', 'l'),
-            (Register::R100, true) => ('b', 'x'),
-            (Register::R011, false) => ('a', 'h'),
-            (Register::R011, true) => ('s', 'p'),
-            (Register::R101, false) => ('c', 'h'),
-            (Register::R101, true) => ('b', 'p'),
-            (Register::R110, false) => ('d', 'h'),
-            (Register::R110, true) => ('s', 'i'),
-            (Register::R111, false) => ('b', 'h'),
-            (Register::R111, true) => ('d', 'i'),
+            (Register::AX, false) => ('a', 'l'),
+            (Register::AX, true) => ('a', 'x'),
+            (Register::CX, false) => ('c', 'l'),
+            (Register::CX, true) => ('c', 'x'),
+            (Register::DX, false) => ('d', 'l'),
+            (Register::DX, true) => ('d', 'x'),
+            (Register::BX, false) => ('b', 'l'),
+            (Register::BX, true) => ('b', 'x'),
+            (Register::SP, false) => ('a', 'h'),
+            (Register::SP, true) => ('s', 'p'),
+            (Register::SI, false) => ('c', 'h'),
+            (Register::BP, true) => ('b', 'p'),
+            (Register::BP, false) => ('d', 'h'),
+            (Register::SI, true) => ('s', 'i'),
+            (Register::DI, false) => ('b', 'h'),
+            (Register::DI, true) => ('d', 'i'),
         }
     }
-    pub fn from_str(reg: &str) -> Self {
+    pub fn from_str(reg: &str) -> (Self, Wide) {
         let mut chars = reg.chars();
         let first = chars.next().unwrap();
         let second = chars.next().unwrap();
@@ -94,7 +96,8 @@ mod tests {
 
     #[test]
     fn test_parse_ixs() {
-        let content = std::fs::read_to_string("fixtures/single_reg_mov.asm").unwrap();
+        let content =
+            std::fs::read_to_string("fixtures/listing_0037_single_register_mov.asm").unwrap();
         let derived_set = InstructionSet::from_decoded_asm_file(&content);
 
         let expected = InstructionSet {

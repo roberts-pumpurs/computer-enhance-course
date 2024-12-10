@@ -7,19 +7,25 @@ pub struct InstructionSet {
     pub bits: u8,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Instruction {
-    Mov { dest: Register, source: Register },
+    Mov {
+        dest: (Register, Wide),
+        source: (Register, Wide),
+    },
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub struct Wide(bool);
+
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum Register {
-    R000,
-    R001,
-    R010,
-    R100,
-    R011,
-    R101,
-    R110,
-    R111,
+    AX,
+    CX,
+    DX,
+    BX,
+    SP,
+    BP,
+    SI,
+    DI,
 }
