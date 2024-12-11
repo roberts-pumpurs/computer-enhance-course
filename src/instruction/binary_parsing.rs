@@ -89,6 +89,17 @@ mod tests {
     }
 
     #[test]
+    fn test_many_register_move_parsing() {
+        let content =
+            std::fs::read_to_string("fixtures/listing_0038_many_register_mov.asm").unwrap();
+        let content_binary = std::fs::read("fixtures/listing_0038_many_register_mov").unwrap();
+        let derived_set = InstructionSet::from_decoded_asm_file(&content);
+        let derived_set_binary = InstructionSet::from_bytes(&content_binary);
+
+        assert_eq!(derived_set, derived_set_binary);
+    }
+
+    #[test]
     fn test_get_expected_register() {
         let base_data = 0b00000111_u8;
         let register = get_register(base_data);
