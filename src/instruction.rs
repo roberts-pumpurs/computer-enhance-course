@@ -1,13 +1,13 @@
 mod binary_parsing;
 mod file_parsing;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct InstructionSet {
     pub instructions: Vec<Instruction>,
     pub bits: u8,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Instruction {
     Mov {
         dest: (Register, Wide),
@@ -15,10 +15,10 @@ pub enum Instruction {
     },
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Wide(bool);
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Register {
     AX,
     CX,

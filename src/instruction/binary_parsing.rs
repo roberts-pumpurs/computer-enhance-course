@@ -1,9 +1,10 @@
-use crate::instruction::{file_parsing, Register, Wide};
-use itertools::Itertools;
+use crate::instruction::{Register, Wide};
+use itertools::Itertools as _;
 
 use super::{Instruction, InstructionSet};
 
 impl InstructionSet {
+    #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> Self {
         let instructions = bytes
             .iter()
@@ -18,18 +19,19 @@ impl InstructionSet {
 }
 
 impl Instruction {
+    #[must_use]
     pub fn from_byte(first_byte: u8, second_byte: u8) -> Self {
         mod masks {
-            pub const OPC: u8 = 0b11111100_u8;
-            pub const DIR: u8 = 0b00000010_u8;
-            pub const WOR: u8 = 0b00000001_u8;
-            pub const MOD: u8 = 0b________11000000_u8;
-            pub const RG1: u8 = 0b________00111000_u8;
-            pub const RG2: u8 = 0b________00000111_u8;
+            pub(crate) const OPC: u8 = 0b11111100_u8;
+            pub(crate) const DIR: u8 = 0b00000010_u8;
+            pub(crate) const WOR: u8 = 0b00000001_u8;
+            pub(crate) const MOD: u8 = 0b________11000000_u8;
+            pub(crate) const RG1: u8 = 0b________00111000_u8;
+            pub(crate) const RG2: u8 = 0b________00000111_u8;
         }
 
         mod opcodes {
-            pub const REG_MEM_TO_FROM_REG: u8 = 0b10001000_u8;
+            pub(crate) const REG_MEM_TO_FROM_REG: u8 = 0b10001000_u8;
         }
 
         mod registers {}
