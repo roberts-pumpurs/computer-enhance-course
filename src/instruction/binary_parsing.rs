@@ -30,14 +30,10 @@ mod word_modes {
 impl Instruction {
     #[must_use]
     pub fn from_byte<I: Iterator<Item = u8>>(mut bytes: I) -> Self {
-        mod masks {
-            pub(crate) const OPC: u8 = 0b____11111100_u8;
-            pub(crate) const OPC_IMM: u8 = 0b11111100_u8;
-        }
-
         mod opcodes {
             pub(crate) const REG_MEM_TO_FROM_REG: u8 = 0b____10001000_u8;
             pub(crate) const REG_MEM_TO_FROM_REG_MAX: u8 = 0b10001011_u8;
+
             pub(crate) const IMMEDIATE_TO_REG: u8 = 0b_______10110000_u8;
             pub(crate) const IMMEDIATE_TO_REG_MAX: u8 = 0b___10111111_u8;
         }
@@ -257,12 +253,13 @@ mod tests {
 
     #[test]
     fn test_listing_39() {
-        // let content = std::fs::read_to_string("fixtures/listing_0039_more_movs.asm").unwrap();
+        let content = std::fs::read_to_string("fixtures/listing_0039_more_movs.asm").unwrap();
         let content_binary = std::fs::read("fixtures/listing_0039_more_movs").unwrap();
         let derived_set_binary = InstructionSet::from_bytes(&content_binary);
+        // todo output to temp file, use assembler to stich it back again, check results
 
         // assert_eq!(derived_set, derived_set_binary);
-        panic!("{:?}", derived_set_binary);
+        panic!("{:}", derived_set_binary);
     }
 
     #[test]
