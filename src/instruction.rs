@@ -9,7 +9,18 @@ pub struct InstructionSet {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Instruction {
-    Mov { dest: Operand, source: Operand },
+    Mov {
+        dest: MovOperand,
+        source: MovOperand,
+    },
+    ImmToReg8 {
+        dest: Reg8,
+        source: u8,
+    },
+    ImmToReg16 {
+        dest: Reg16,
+        source: (u8, u8),
+    },
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -61,7 +72,7 @@ enum EffectiveAddr<T> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum Operand {
+enum MovOperand {
     Reg8(Reg8),
     Reg16(Reg16),
     Mod00(Mod00EffectiveAddr),
