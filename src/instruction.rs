@@ -9,17 +9,11 @@ pub struct InstructionSet {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Instruction {
-    Mov {
-        dest: (Register, Wide),
-        source: (Register, Wide),
-    },
+    Mov { dest: Operand, source: Operand },
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct Wide(bool);
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum Register {
+pub enum Reg16 {
     AX,
     CX,
     DX,
@@ -28,4 +22,22 @@ pub enum Register {
     BP,
     SI,
     DI,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum Reg8 {
+    AL,
+    CL,
+    DL,
+    BL,
+    AH,
+    CH,
+    DH,
+    BH,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum Operand {
+    Reg8(Reg8),
+    Reg16(Reg16),
 }

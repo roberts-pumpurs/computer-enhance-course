@@ -1,6 +1,6 @@
 use crate::instruction::Instruction;
 
-use super::{InstructionSet, Register, Wide};
+use super::{InstructionSet, Operand, Reg16, Reg8};
 
 impl InstructionSet {
     #[must_use]
@@ -35,8 +35,8 @@ impl Instruction {
             panic!("Invalid instruction: {line}");
         };
 
-        let dest = Register::from_str(dest);
-        let source = Register::from_str(source);
+        let dest = Operand::from_str(dest);
+        let source = Operand::from_str(source);
 
         match ix {
             "mov" => Self::Mov { dest, source },
@@ -45,71 +45,153 @@ impl Instruction {
     }
 }
 
-impl Register {
+impl Operand {
     #[must_use]
-    pub fn from_chars(left: char, right: char) -> (Self, Wide) {
-        let is_wide = matches!(right, 'x' | 'p' | 'i');
+    pub fn from_chars(left: char, right: char) -> Self {
         match (left, right) {
-            ('a', 'l' | 'x') => (Self::AX, Wide(is_wide)),
-            ('c', 'l' | 'x') => (Self::CX, Wide(is_wide)),
-            ('d', 'l' | 'x') => (Self::DX, Wide(is_wide)),
-            ('b', 'l' | 'x') => (Self::BX, Wide(is_wide)),
-            ('a', 'h') | ('s', 'p') => (Self::SP, Wide(is_wide)),
-            ('c', 'h') | ('b', 'p') => (Self::BP, Wide(is_wide)),
-            ('d', 'h') | ('s', 'i') => (Self::SI, Wide(is_wide)),
-            ('b', 'h') | ('d', 'i') => (Self::DI, Wide(is_wide)),
+            ('a', 'l') => Operand::Reg8(Reg8::AL),
+            ('c', 'l') => Operand::Reg8(Reg8::CL),
+            ('d', 'l') => Operand::Reg8(Reg8::BL),
+            ('b', 'l') => Operand::Reg8(Reg8::BL),
+            ('a', 'h') => Operand::Reg8(Reg8::AH),
+            ('c', 'h') => Operand::Reg8(Reg8::CH),
+            ('d', 'h') => Operand::Reg8(Reg8::DH),
+            ('b', 'h') => Operand::Reg8(Reg8::BH),
+            ('a', 'x') => Operand::Reg16(Reg16::AX),
+            ('c', 'x') => Operand::Reg16(Reg16::CX),
+            ('d', 'x') => Operand::Reg16(Reg16::DX),
+            ('b', 'x') => Operand::Reg16(Reg16::BX),
+            ('s', 'p') => Operand::Reg16(Reg16::SP),
+            ('b', 'p') => Operand::Reg16(Reg16::BP),
+            ('s', 'i') => Operand::Reg16(Reg16::SI),
+            ('d', 'i') => Operand::Reg16(Reg16::DI),
             _ => {
-                panic!("unexpected chars")
+                unreachable!()
             }
         }
     }
 
     #[must_use]
-    pub const fn to_chars(&self, w: Wide) -> (char, char) {
-        let w = w.0;
-        match (self, w) {
-            (Self::AX, false) => ('a', 'l'),
-            (Self::AX, true) => ('a', 'x'),
-            (Self::CX, false) => ('c', 'l'),
-            (Self::CX, true) => ('c', 'x'),
-            (Self::DX, false) => ('d', 'l'),
-            (Self::DX, true) => ('d', 'x'),
-            (Self::BX, false) => ('b', 'l'),
-            (Self::BX, true) => ('b', 'x'),
-            (Self::SP, false) => ('a', 'h'),
-            (Self::SP, true) => ('s', 'p'),
-            (Self::SI, false) => ('c', 'h'),
-            (Self::BP, true) => ('b', 'p'),
-            (Self::BP, false) => ('d', 'h'),
-            (Self::SI, true) => ('s', 'i'),
-            (Self::DI, false) => ('b', 'h'),
-            (Self::DI, true) => ('d', 'i'),
+    pub const fn to_chars(&self) -> (char, char) {
+        match self {
+            // Reg8 variants
+            Operand::Reg8(Reg8::AL) => ('a', 'l'),
+            Operand::Reg8(Reg8::CL) => ('c', 'l'),
+            Operand::Reg8(Reg8::DL) => ('d', 'l'),
+            Operand::Reg8(Reg8::BL) => ('b', 'l'),
+            Operand::Reg8(Reg8::AH) => ('a', 'h'),
+            Operand::Reg8(Reg8::CH) => ('c', 'h'),
+            Operand::Reg8(Reg8::DH) => ('d', 'h'),
+            Operand::Reg8(Reg8::BH) => ('b', 'h'),
+
+            // Reg16 variants
+            Operand::Reg16(Reg16::AX) => ('a', 'x'),
+            Operand::Reg16(Reg16::CX) => ('c', 'x'),
+            Operand::Reg16(Reg16::DX) => ('d', 'x'),
+            Operand::Reg16(Reg16::BX) => ('b', 'x'),
+            Operand::Reg16(Reg16::SP) => ('s', 'p'),
+            Operand::Reg16(Reg16::BP) => ('b', 'p'),
+            Operand::Reg16(Reg16::SI) => ('s', 'i'),
+            Operand::Reg16(Reg16::DI) => ('d', 'i'),
         }
     }
+
     #[must_use]
-    pub fn from_str(reg: &str) -> (Self, Wide) {
+    pub fn from_str(reg: &str) -> Self {
         let mut chars = reg.chars();
-        let first = chars.next().unwrap();
-        let second = chars.next().unwrap();
+        let first = chars.next().expect("needs to have 2 chars");
+        let second = chars.next().expect("needs to have 2 chars");
         Self::from_chars(first, second)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use itertools::Itertools;
+
     use super::*;
 
     #[test]
-    fn test_parse_ixs() {
+    fn test_parse_ixs_single_mov() {
         let content =
             std::fs::read_to_string("fixtures/listing_0037_single_register_mov.asm").unwrap();
         let derived_set = InstructionSet::from_decoded_asm_file(&content);
 
         let expected = InstructionSet {
             instructions: vec![Instruction::Mov {
-                dest: Register::from_chars('c', 'x'),
-                source: Register::from_chars('b', 'x'),
+                dest: Operand::Reg16(Reg16::CX),
+                source: Operand::Reg16(Reg16::BX),
             }],
+            bits: 16,
+        };
+
+        assert_eq!(derived_set, expected);
+    }
+
+    #[test]
+    fn test_parse_ixs_large_mov() {
+        let content =
+            std::fs::read_to_string("fixtures/listing_0038_many_register_mov.asm").unwrap();
+        let derived_set = InstructionSet::from_decoded_asm_file(&content);
+        // mov cx, bx
+        // mov ch, ah
+        // mov dx, bx
+        // mov si, bx
+        // mov bx, di
+        // mov al, cl
+        // mov ch, ch
+        // mov bx, ax
+        // mov bx, si
+        // mov sp, di
+        // mov bp, ax
+        let expected = InstructionSet {
+            instructions: [
+                Instruction::Mov {
+                    dest: Operand::Reg16(Reg16::CX),
+                    source: Operand::Reg16(Reg16::BX),
+                },
+                Instruction::Mov {
+                    dest: Operand::Reg8(Reg8::CH),
+                    source: Operand::Reg8(Reg8::AH),
+                },
+                Instruction::Mov {
+                    dest: Operand::Reg16(Reg16::DX),
+                    source: Operand::Reg16(Reg16::BX),
+                },
+                Instruction::Mov {
+                    dest: Operand::Reg16(Reg16::SI),
+                    source: Operand::Reg16(Reg16::BX),
+                },
+                Instruction::Mov {
+                    dest: Operand::Reg16(Reg16::BX),
+                    source: Operand::Reg16(Reg16::DI),
+                },
+                Instruction::Mov {
+                    dest: Operand::Reg8(Reg8::AL),
+                    source: Operand::Reg8(Reg8::CL),
+                },
+                Instruction::Mov {
+                    dest: Operand::Reg8(Reg8::CH),
+                    source: Operand::Reg8(Reg8::CH),
+                },
+                Instruction::Mov {
+                    dest: Operand::Reg16(Reg16::BX),
+                    source: Operand::Reg16(Reg16::AX),
+                },
+                Instruction::Mov {
+                    dest: Operand::Reg16(Reg16::BX),
+                    source: Operand::Reg16(Reg16::SI),
+                },
+                Instruction::Mov {
+                    dest: Operand::Reg16(Reg16::SP),
+                    source: Operand::Reg16(Reg16::DI),
+                },
+                Instruction::Mov {
+                    dest: Operand::Reg16(Reg16::BP),
+                    source: Operand::Reg16(Reg16::AX),
+                },
+            ]
+            .to_vec(),
             bits: 16,
         };
 
