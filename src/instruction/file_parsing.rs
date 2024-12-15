@@ -5,15 +5,8 @@ use super::{InstructionSet, Operand, Reg16, Reg8};
 impl InstructionSet {
     #[must_use]
     pub fn from_decoded_asm_file(file_content: &str) -> Self {
-        const BITS_PREFIX: usize = "bits ".len();
         let mut instructions = Vec::new();
-
-        let mut lines = file_content
-            .lines()
-            .filter(|x| !x.starts_with(';'))
-            .filter(|x| !x.is_empty());
-        let bit_line = lines.next().unwrap();
-        let bits = bit_line.split_at(BITS_PREFIX).1.parse().unwrap();
+        let (lines, bits) = get_metadata(file_content);
 
         for line in lines {
             let instr = Instruction::from_line(line);
@@ -22,6 +15,18 @@ impl InstructionSet {
 
         Self { instructions, bits }
     }
+}
+
+pub(crate) fn get_metadata(file_content: &str) -> (impl Iterator<Item = &str>, u8) {
+    const BITS_PREFIX: usize = "bits ".len();
+
+    let mut lines = file_content
+        .lines()
+        .filter(|x| !x.starts_with(';'))
+        .filter(|x| !x.is_empty());
+    let bit_line = lines.next().unwrap();
+    let bits = bit_line.split_at(BITS_PREFIX).1.parse().unwrap();
+    (lines, bits)
 }
 
 impl Instruction {
@@ -47,7 +52,7 @@ impl Instruction {
 
 impl Operand {
     #[must_use]
-    pub fn from_chars(left: char, right: char) -> Self {
+    pub(crate) fn from_chars(left: char, right: char) -> Self {
         match (left, right) {
             ('a', 'l') => Operand::Reg8(Reg8::AL),
             ('c', 'l') => Operand::Reg8(Reg8::CL),
@@ -72,7 +77,7 @@ impl Operand {
     }
 
     #[must_use]
-    pub const fn to_chars(&self) -> (char, char) {
+    pub(crate) const fn to_chars(&self) -> (char, char) {
         match self {
             // Reg8 variants
             Operand::Reg8(Reg8::AL) => ('a', 'l'),

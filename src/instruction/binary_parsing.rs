@@ -7,13 +7,16 @@ use super::{Instruction, InstructionSet, Reg16, Reg8};
 impl InstructionSet {
     #[must_use]
     pub fn from_bytes(bytes: &[u8]) -> Self {
-        let instructions = bytes
-            .iter()
-            .tuples()
-            .map(|(first, second)| Instruction::from_byte(*first, *second))
-            .collect_vec();
+        let mut byte_iter = bytes.iter().copied().peekable();
+
+        let mut ixs = vec![];
+        while byte_iter.peek().is_some() {
+            let ix = Instruction::from_byte(&mut byte_iter);
+            ixs.push(ix);
+        }
+
         Self {
-            instructions,
+            instructions: ixs,
             bits: 16,
         }
     }
@@ -21,7 +24,7 @@ impl InstructionSet {
 
 impl Instruction {
     #[must_use]
-    pub fn from_byte(first_byte: u8, second_byte: u8) -> Self {
+    pub fn from_byte<I: Iterator<Item = u8>>(mut bytes: I) -> Self {
         mod masks {
             pub(crate) const OPC: u8 = 0b11111100_u8;
             pub(crate) const DIR: u8 = 0b00000010_u8;
@@ -52,42 +55,44 @@ impl Instruction {
             pub(crate) const MEM_M_REGISTER_MODE: u8 = 0b______11000000_u8;
         }
 
+        let first_byte = bytes.next().unwrap();
         let opcode = first_byte & masks::OPC;
-        let direction = first_byte & masks::DIR;
-        let word = first_byte & masks::WOR;
-        let memory_mode = second_byte & masks::MOD;
-
-        if memory_mode != memory_mode::MEM_M_REGISTER_MODE {
-            unimplemented!("we only support reg to reg movement");
-        }
-
-        if direction != dir_mode::D_M_REG_HAS_IX_SOURCE {
-            unimplemented!("we can't read extra bytes yet");
-        }
-
         match opcode {
             opcodes::REG_MEM_TO_FROM_REG => {
-                let register_operand1 = second_byte & masks::RG1;
-                let register_operand2 = second_byte & masks::RG2;
+                let second_byte = bytes.next().unwrap();
 
-                match word {
-                    word_modes::W_M_16B_WORD => {
-                        let source = decode_reg16(register_operand1 >> 3);
-                        let dest = decode_reg16(register_operand2);
-                        Self::Mov {
-                            dest: Operand::Reg16(dest),
-                            source: Operand::Reg16(source),
-                        }
+                let direction = first_byte & masks::DIR;
+                let word = first_byte & masks::WOR;
+                let memory_mode = second_byte & masks::MOD;
+
+                match memory_mode {
+                    memory_mode::MEM_M_REGISTER_MODE => {
+                        assert_eq!(
+                            direction,
+                            dir_mode::D_M_REG_HAS_IX_SOURCE,
+                            "reg mode always has all the bytes it needs"
+                        );
+
+                        let register_operand1 = second_byte & masks::RG1;
+                        let register_operand2 = second_byte & masks::RG2;
+
+                        let (source, dest) = match word {
+                            word_modes::W_M_16B_WORD => {
+                                let source = Operand::Reg16(decode_reg16(register_operand1 >> 3));
+                                let dest = Operand::Reg16(decode_reg16(register_operand2));
+                                (source, dest)
+                            }
+                            word_modes::W_M_8B_WORD => {
+                                let source = Operand::Reg8(decode_reg8(register_operand1 >> 3));
+                                let dest = Operand::Reg8(decode_reg8(register_operand2));
+                                (source, dest)
+                            }
+                            _ => unreachable!(),
+                        };
+
+                        Self::Mov { dest, source }
                     }
-                    word_modes::W_M_8B_WORD => {
-                        let source = decode_reg8(register_operand1 >> 3);
-                        let dest = decode_reg8(register_operand2);
-                        Self::Mov {
-                            dest: Operand::Reg8(dest),
-                            source: Operand::Reg8(source),
-                        }
-                    }
-                    _ => unreachable!(),
+                    _ => unimplemented!("we only support reg to reg movement"),
                 }
             }
             _ => unimplemented!(),
@@ -128,7 +133,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_move_parsing_works() {
+    fn test_listing_37() {
         let content =
             std::fs::read_to_string("fixtures/listing_0037_single_register_mov.asm").unwrap();
         let content_binary = std::fs::read("fixtures/listing_0037_single_register_mov").unwrap();
@@ -139,7 +144,7 @@ mod tests {
     }
 
     #[test]
-    fn test_many_register_move_parsing() {
+    fn test_listing_38() {
         let content =
             std::fs::read_to_string("fixtures/listing_0038_many_register_mov.asm").unwrap();
         let content_binary = std::fs::read("fixtures/listing_0038_many_register_mov").unwrap();
@@ -147,6 +152,16 @@ mod tests {
         let derived_set_binary = InstructionSet::from_bytes(&content_binary);
 
         assert_eq!(derived_set, derived_set_binary);
+    }
+
+    #[test]
+    fn test_listing_39() {
+        // let content = std::fs::read_to_string("fixtures/listing_0039_more_movs.asm").unwrap();
+        let content_binary = std::fs::read("fixtures/listing_0039_more_movs").unwrap();
+        let derived_set_binary = InstructionSet::from_bytes(&content_binary);
+
+        // assert_eq!(derived_set, derived_set_binary);
+        panic!("{:?}", derived_set_binary);
     }
 
     #[test]
