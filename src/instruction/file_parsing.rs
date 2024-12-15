@@ -98,6 +98,7 @@ impl Operand {
             Operand::Reg16(Reg16::BP) => ('b', 'p'),
             Operand::Reg16(Reg16::SI) => ('s', 'i'),
             Operand::Reg16(Reg16::DI) => ('d', 'i'),
+            _ => unimplemented!(),
         }
     }
 

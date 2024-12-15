@@ -37,7 +37,34 @@ enum Reg8 {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum Mod00EffectiveAddr {
+    BxPlusSi,
+    BxPlusDi,
+    BPPlusSi,
+    BPPlusDi,
+    Si,
+    Di,
+    DirectAddr((u8, u8)),
+    Bx,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum EffectiveAddr<T> {
+    BxPlusSi(T),
+    BxPlusDi(T),
+    BPPlusSi(T),
+    BPPlusDi(T),
+    Si(T),
+    Di(T),
+    Bp(T),
+    Bx(T),
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Operand {
     Reg8(Reg8),
     Reg16(Reg16),
+    Mod00(Mod00EffectiveAddr),
+    Mod01(EffectiveAddr<u8>),
+    Mod10(EffectiveAddr<(u8, u8)>),
 }
