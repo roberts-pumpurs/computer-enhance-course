@@ -72,5 +72,10 @@ edition = "2021"
 [dependencies]
 itertools = "0.13"
 
+[dev-dependencies]
+xshell.workspace = true
+pretty_assertions = "1"
+tempdir = "0.3"
+
 [lints]
 workspace = true

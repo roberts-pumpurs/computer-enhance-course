@@ -1,5 +1,3 @@
-use itertools::Itertools as _;
-
 use crate::instruction::MovOperand;
 
 use super::{EffectiveAddr, Instruction, InstructionSet, Mod00EffectiveAddr, Reg16, Reg8};
@@ -39,7 +37,6 @@ impl Instruction {
         }
 
         let first_byte = bytes.next().unwrap();
-        dbg!(format!("{:b}", first_byte));
         match first_byte {
             opcodes::REG_MEM_TO_FROM_REG..=opcodes::REG_MEM_TO_FROM_REG_MAX => {
                 mod masks {
@@ -227,39 +224,62 @@ fn decode_mod01_mod02_rm<T>(rm: u8, addr: T) -> EffectiveAddr<T> {
 
 #[cfg(test)]
 mod tests {
+    use std::{fs::File, io::Write};
+
+    use pretty_assertions::assert_eq;
+    use tempdir::TempDir;
+    use xshell::cmd;
+
     use super::*;
+
+    fn read_and_test(test: &str) {
+        let content_binary = std::fs::read(format!("fixtures/{test:}")).unwrap();
+        let derived_set_binary = InstructionSet::from_bytes(&content_binary);
+
+        generate_and_compare_machine_code(test, &derived_set_binary);
+    }
+
+    fn generate_and_compare_machine_code(test: &str, ix_set: &InstructionSet) {
+        let output = format!("{ix_set:}");
+        let sh = xshell::Shell::new().unwrap();
+        let fixture_machine_code_file = sh.current_dir().join("fixtures").join(format!("{test:}"));
+        let expected_content = sh.read_binary_file(fixture_machine_code_file).unwrap();
+
+        // write the temp asm to file
+        let temp_dir = TempDir::new(test).unwrap();
+        let asm_output_file = temp_dir.path().join(format!("{test:}.asm"));
+        let machine_code_output_file = temp_dir.path().join(format!("{test:}"));
+        let mut f = File::create(&asm_output_file).unwrap();
+        f.write_all(output.as_bytes()).unwrap();
+        f.sync_all().unwrap();
+
+        // run the nasm command
+        let _g = sh.push_dir(temp_dir.path());
+        cmd!(sh, "nasm {asm_output_file} -o {machine_code_output_file}")
+            .run()
+            .unwrap();
+
+        // read the generated binary
+        let content_binary = sh.read_binary_file(&machine_code_output_file).unwrap();
+        assert_eq!(content_binary, expected_content);
+    }
 
     #[test]
     fn test_listing_37() {
-        let content =
-            std::fs::read_to_string("fixtures/listing_0037_single_register_mov.asm").unwrap();
-        let content_binary = std::fs::read("fixtures/listing_0037_single_register_mov").unwrap();
-        let derived_set = InstructionSet::from_decoded_asm_file(&content);
-        let derived_set_binary = InstructionSet::from_bytes(&content_binary);
-
-        assert_eq!(derived_set, derived_set_binary);
+        let test = "listing_0037_single_register_mov";
+        read_and_test(test);
     }
 
     #[test]
     fn test_listing_38() {
-        let content =
-            std::fs::read_to_string("fixtures/listing_0038_many_register_mov.asm").unwrap();
-        let content_binary = std::fs::read("fixtures/listing_0038_many_register_mov").unwrap();
-        let derived_set = InstructionSet::from_decoded_asm_file(&content);
-        let derived_set_binary = InstructionSet::from_bytes(&content_binary);
-
-        assert_eq!(derived_set, derived_set_binary);
+        let test = "listing_0038_many_register_mov";
+        read_and_test(test);
     }
 
     #[test]
     fn test_listing_39() {
-        let content = std::fs::read_to_string("fixtures/listing_0039_more_movs.asm").unwrap();
-        let content_binary = std::fs::read("fixtures/listing_0039_more_movs").unwrap();
-        let derived_set_binary = InstructionSet::from_bytes(&content_binary);
-        // todo output to temp file, use assembler to stich it back again, check results
-
-        // assert_eq!(derived_set, derived_set_binary);
-        panic!("{:}", derived_set_binary);
+        let test = "listing_0039_more_movs";
+        read_and_test(test);
     }
 
     #[test]

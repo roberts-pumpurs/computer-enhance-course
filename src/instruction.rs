@@ -1,5 +1,4 @@
 mod binary_parsing;
-mod file_parsing;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct InstructionSet {
