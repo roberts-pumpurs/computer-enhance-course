@@ -224,8 +224,12 @@ fn decode_mod01_mod02_rm<T>(rm: u8, addr: T) -> EffectiveAddr<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs::File, io::Write};
+    use std::{
+        fs::{self, File},
+        io::{Read, Write},
+    };
 
+    use itertools::{assert_equal, Itertools};
     use pretty_assertions::assert_eq;
     use tempdir::TempDir;
     use xshell::cmd;
@@ -243,6 +247,17 @@ mod tests {
         let output = format!("{ix_set:}");
         let sh = xshell::Shell::new().unwrap();
         let fixture_machine_code_file = sh.current_dir().join("fixtures").join(format!("{test:}"));
+        let fixture_asm_code_file = sh
+            .current_dir()
+            .join("fixtures")
+            .join(format!("{test:}.asm"));
+        let expected_asm_content = sh
+            .read_file(fixture_asm_code_file)
+            .unwrap()
+            .lines()
+            .filter(|x| !x.starts_with(";"))
+            .filter(|x| !x.is_empty())
+            .join("\n");
         let expected_content = sh.read_binary_file(fixture_machine_code_file).unwrap();
 
         // write the temp asm to file
@@ -261,6 +276,10 @@ mod tests {
 
         // read the generated binary
         let content_binary = sh.read_binary_file(&machine_code_output_file).unwrap();
+        dbg!(ix_set);
+        if content_binary != expected_content {
+            assert_eq!(expected_asm_content, output);
+        }
         assert_eq!(content_binary, expected_content);
     }
 
