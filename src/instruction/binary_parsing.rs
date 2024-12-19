@@ -1,5 +1,9 @@
 use crate::instruction::MovOperand;
 
+//  done: for listing 40: go to text and try to find "negative address displacements"
+// - for handling "word", "byte" from asm -- that's "immediate to register/memory move" (new opcode)
+// - ax special handling "memory to accumulator" and "accumulator to memory" (new opcodestn)
+
 use super::{EffectiveAddr, Instruction, InstructionSet, Mod00EffectiveAddr, Reg16, Reg8};
 
 impl InstructionSet {
@@ -10,7 +14,9 @@ impl InstructionSet {
         let mut ixs = vec![];
         while byte_iter.peek().is_some() {
             let ix = Instruction::from_byte(&mut byte_iter);
-            ixs.push(ix);
+            if let Some(ix) = ix {
+                ixs.push(ix);
+            }
         }
 
         Self {
@@ -27,17 +33,26 @@ mod word_modes {
 
 impl Instruction {
     #[must_use]
-    pub fn from_byte<I: Iterator<Item = u8>>(mut bytes: I) -> Self {
+    pub fn from_byte<I: Iterator<Item = u8>>(mut bytes: I) -> Option<Self> {
         mod opcodes {
             pub(crate) const REG_MEM_TO_FROM_REG: u8 = 0b____10001000_u8;
             pub(crate) const REG_MEM_TO_FROM_REG_MAX: u8 = 0b10001011_u8;
 
             pub(crate) const IMMEDIATE_TO_REG: u8 = 0b_______10110000_u8;
             pub(crate) const IMMEDIATE_TO_REG_MAX: u8 = 0b___10111111_u8;
+
+            pub(crate) const IMMEDIATE_TO_REG_MEM: u8 = 0b_______11000110_u8;
+            pub(crate) const IMMEDIATE_TO_REG_MEM_MAX: u8 = 0b___11000111_u8;
+        }
+        mod memory_mode {
+            pub(crate) const MEM_M_NO_DISPLACEMENT: u8 = 0b____00000000_u8;
+            pub(crate) const MEM_M_8_BIT_DISPLACEMENT: u8 = 0b_01000000_u8;
+            pub(crate) const MEM_M_16_BIT_DISPLACEMENT: u8 = 0b10000000_u8;
+            pub(crate) const MEM_M_REGISTER_MODE: u8 = 0b______11000000_u8;
         }
 
         let first_byte = bytes.next().unwrap();
-        match first_byte {
+        let ix = match first_byte {
             opcodes::REG_MEM_TO_FROM_REG..=opcodes::REG_MEM_TO_FROM_REG_MAX => {
                 mod masks {
                     pub(crate) const DIR: u8 = 0b00000010_u8;
@@ -54,12 +69,6 @@ impl Instruction {
                     pub(crate) const W_M_REG_HAS_IX_DEST: u8 = 0b__00000010_u8;
                 }
 
-                mod memory_mode {
-                    pub(crate) const MEM_M_NO_DISPLACEMENT: u8 = 0b____00000000_u8;
-                    pub(crate) const MEM_M_8_BIT_DISPLACEMENT: u8 = 0b_01000000_u8;
-                    pub(crate) const MEM_M_16_BIT_DISPLACEMENT: u8 = 0b10000000_u8;
-                    pub(crate) const MEM_M_REGISTER_MODE: u8 = 0b______11000000_u8;
-                }
                 let second_byte = bytes.next().unwrap();
 
                 let direction = first_byte & masks::DIR;
@@ -152,8 +161,75 @@ impl Instruction {
                     _ => unreachable!(),
                 }
             }
-            _ => unimplemented!(),
-        }
+            opcodes::IMMEDIATE_TO_REG_MEM..=opcodes::IMMEDIATE_TO_REG_MEM_MAX => {
+                mod masks {
+                    pub(crate) const WOR: u8 = 0b00000001_u8;
+                    pub(crate) const MOD: u8 = 0b________11100000_u8;
+                    pub(crate) const RM: u8 = 0b________00000011_u8;
+                }
+
+                let second_byte = bytes.next().unwrap();
+
+                let word = (first_byte & masks::WOR);
+                let memory_mode = second_byte & masks::MOD;
+                let rm = second_byte & masks::RM;
+
+                let get_source = |bytes: &mut I| {
+                    let immediate_byte_1 = bytes.next().unwrap();
+                    let source = match word {
+                        word_modes::W_M_16B_WORD => {
+                            let immediate_byte_2 = bytes.next().unwrap();
+                            (immediate_byte_1, Some(immediate_byte_2))
+                        }
+                        word_modes::W_M_8B_WORD => (immediate_byte_1, None),
+                        _ => unreachable!(),
+                    };
+                    source
+                };
+
+                match memory_mode {
+                    memory_mode::MEM_M_REGISTER_MODE => {
+                        let dest = reg_to_mov_operand(&word, rm);
+                        let source = get_source(&mut bytes);
+
+                        Self::ImmToMemory { dest, source }
+                    }
+                    memory_mode::MEM_M_NO_DISPLACEMENT => {
+                        let dest = decode_mod00_rm(rm, &mut bytes);
+                        let source = get_source(&mut bytes);
+
+                        Self::ImmToMemory { dest, source }
+                    }
+                    memory_mode::MEM_M_8_BIT_DISPLACEMENT => {
+                        let low_disp_byte = bytes.next().unwrap();
+                        let rm = decode_mod01_mod02_rm(rm, low_disp_byte);
+                        let source = get_source(&mut bytes);
+
+                        Self::ImmToMemory {
+                            dest: MovOperand::Mod01(rm),
+                            source,
+                        }
+                    }
+                    memory_mode::MEM_M_16_BIT_DISPLACEMENT => {
+                        let low_disp_byte = bytes.next().unwrap();
+                        let high_disp_byte = bytes.next().unwrap();
+
+                        let rm = decode_mod01_mod02_rm(rm, (low_disp_byte, high_disp_byte));
+                        let source = get_source(&mut bytes);
+
+                        Self::ImmToMemory {
+                            dest: MovOperand::Mod10(rm),
+                            source,
+                        }
+                    }
+                    _ => unimplemented!("we only support reg to reg movement"),
+                }
+            }
+            _ => {
+                return None;
+            }
+        };
+        Some(ix)
     }
 }
 
@@ -298,6 +374,12 @@ mod tests {
     #[test]
     fn test_listing_39() {
         let test = "listing_0039_more_movs";
+        read_and_test(test);
+    }
+
+    #[test]
+    fn test_listing_40() {
+        let test = "listing_0040_challenge_movs";
         read_and_test(test);
     }
 
