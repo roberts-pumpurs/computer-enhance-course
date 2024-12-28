@@ -1,7 +1,7 @@
 use crate::instruction::MovOperand;
 
 //  done: for listing 40: go to text and try to find "negative address displacements"
-// - for handling "word", "byte" from asm -- that's "immediate to register/memory move" (new opcode)
+//  WIP - for handling "word", "byte" from asm -- that's "immediate to register/memory move" (new opcode)
 // - ax special handling "memory to accumulator" and "accumulator to memory" (new opcodestn)
 
 use super::{EffectiveAddr, Instruction, InstructionSet, Mod00EffectiveAddr, Reg16, Reg8};
@@ -165,7 +165,7 @@ impl Instruction {
                 mod masks {
                     pub(crate) const WOR: u8 = 0b00000001_u8;
                     pub(crate) const MOD: u8 = 0b________11100000_u8;
-                    pub(crate) const RM: u8 = 0b________00000011_u8;
+                    pub(crate) const RM: u8 = 0b_________00000111_u8;
                 }
 
                 let second_byte = bytes.next().unwrap();
@@ -285,6 +285,7 @@ fn decode_mod00_rm<I: Iterator<Item = u8>>(rm: u8, mut bytes: I) -> MovOperand {
 }
 
 fn decode_mod01_mod02_rm<T>(rm: u8, addr: T) -> EffectiveAddr<T> {
+    dbg!(rm);
     match rm {
         0b000 => EffectiveAddr::BxPlusSi(addr),
         0b001 => EffectiveAddr::BxPlusDi(addr),

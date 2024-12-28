@@ -114,7 +114,7 @@ impl fmt::Display for Instruction {
                 let byte_1 = source.0;
                 let source = match source.1 {
                     Some(byte_2) => {
-                        let val = ((byte_1 as u16) << 8) | (byte_2 as u16);
+                        let val = ((byte_2 as u16) << 8) | (byte_1 as u16);
                         format!("word {val:}")
                     }
                     None => {
