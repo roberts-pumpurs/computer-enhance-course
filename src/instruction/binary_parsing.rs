@@ -176,21 +176,21 @@ impl Instruction {
 
                 let second_byte = bytes.next().unwrap();
 
-                let word = (first_byte & masks::WOR);
+                let word = first_byte & masks::WOR;
                 let memory_mode = second_byte & masks::MOD;
                 let rm = second_byte & masks::RM;
 
                 let get_source = |bytes: &mut I| {
                     let immediate_byte_1 = bytes.next().unwrap();
-                    let source = match word {
+
+                    match word {
                         word_modes::W_M_16B_WORD => {
                             let immediate_byte_2 = bytes.next().unwrap();
                             (immediate_byte_1, Some(immediate_byte_2))
                         }
                         word_modes::W_M_8B_WORD => (immediate_byte_1, None),
                         _ => unreachable!(),
-                    };
-                    source
+                    }
                 };
 
                 match memory_mode {
@@ -276,12 +276,11 @@ impl Instruction {
 }
 
 fn reg_to_mov_operand(word: &u8, register_operand1: u8) -> MovOperand {
-    let reg = match *word {
+    match *word {
         word_modes::W_M_16B_WORD => MovOperand::Reg16(decode_reg16(register_operand1)),
         word_modes::W_M_8B_WORD => MovOperand::Reg8(decode_reg8(register_operand1)),
         _ => unreachable!(),
-    };
-    reg
+    }
 }
 
 fn decode_reg8(reg: u8) -> Reg8 {
@@ -342,12 +341,9 @@ fn decode_mod01_mod02_rm<T>(rm: u8, addr: T) -> EffectiveAddr<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs::{self, File},
-        io::{Read, Write},
-    };
+    use std::{fs::File, io::Write as _};
 
-    use itertools::{assert_equal, Itertools};
+    use itertools::Itertools as _;
     use pretty_assertions::assert_eq;
     use tempdir::TempDir;
     use xshell::cmd;
@@ -365,7 +361,7 @@ mod tests {
         let output = format!("{ix_set:}");
         println!("output {output:}");
         let sh = xshell::Shell::new().unwrap();
-        let fixture_machine_code_file = sh.current_dir().join("fixtures").join(format!("{test:}"));
+        let fixture_machine_code_file = sh.current_dir().join("fixtures").join(test);
         let fixture_asm_code_file = sh
             .current_dir()
             .join("fixtures")
@@ -374,7 +370,7 @@ mod tests {
             .read_file(fixture_asm_code_file)
             .unwrap()
             .lines()
-            .filter(|x| !x.starts_with(";"))
+            .filter(|x| !x.starts_with(';'))
             .filter(|x| !x.is_empty())
             .join("\n");
         let expected_content = sh.read_binary_file(fixture_machine_code_file).unwrap();
@@ -382,7 +378,7 @@ mod tests {
         // write the temp asm to file
         let temp_dir = TempDir::new(test).unwrap();
         let asm_output_file = temp_dir.path().join(format!("{test:}.asm"));
-        let machine_code_output_file = temp_dir.path().join(format!("{test:}"));
+        let machine_code_output_file = temp_dir.path().join(test);
         let mut f = File::create(&asm_output_file).unwrap();
         f.write_all(output.as_bytes()).unwrap();
         f.sync_all().unwrap();

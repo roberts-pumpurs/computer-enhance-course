@@ -102,7 +102,7 @@ use std::fmt;
 impl fmt::Display for InstructionSet {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for instr in &self.instructions {
-            writeln!(f, "{}", instr)?;
+            writeln!(f, "{instr}")?;
         }
         Ok(())
     }
@@ -111,49 +111,49 @@ impl fmt::Display for InstructionSet {
 impl fmt::Display for AccumulatorReg {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
-            AccumulatorReg::Ax => "ax",
-            AccumulatorReg::Al => "al",
+            Self::Ax => "ax",
+            Self::Al => "al",
         };
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 
 impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Instruction::Mov { dest, source } => {
-                write!(f, "mov {}, {}", dest, source)
+            Self::Mov { dest, source } => {
+                write!(f, "mov {dest}, {source}")
             }
-            Instruction::ImmToReg8 { dest, source } => {
-                write!(f, "mov {}, {:}", dest, source)
+            Self::ImmToReg8 { dest, source } => {
+                write!(f, "mov {dest}, {source:}")
             }
-            Instruction::ImmToReg16 {
+            Self::ImmToReg16 {
                 dest,
                 source: (low, high),
             } => {
-                let val = ((*high as u16) << 8) | (*low as u16);
-                write!(f, "mov {}, {:}", dest, val)
+                let val = (u16::from(*high) << 8) | u16::from(*low);
+                write!(f, "mov {dest}, {val:}")
             }
-            Instruction::ImmToMemory { dest, source } => {
+            Self::ImmToMemory { dest, source } => {
                 let byte_1 = source.0;
                 let source = match source.1 {
                     Some(byte_2) => {
-                        let val = ((byte_2 as u16) << 8) | (byte_1 as u16);
+                        let val = (u16::from(byte_2) << 8) | u16::from(byte_1);
                         format!("word {val:}")
                     }
                     None => {
                         format!("byte {byte_1:}")
                     }
                 };
-                write!(f, "mov {}, {:}", dest, source)
+                write!(f, "mov {dest}, {source:}")
             }
-            Instruction::MemoryToAccumulator { dest, source } => {
-                let source = ((source.1 as u16) << 8) | (source.0 as u16);
-                write!(f, "mov {}, [{:}]", dest, source)
+            Self::MemoryToAccumulator { dest, source } => {
+                let source = (u16::from(source.1) << 8) | u16::from(source.0);
+                write!(f, "mov {dest}, [{source:}]")
             }
-            Instruction::AccumulatorToMemory { dest, source } => {
-                let dest = ((dest.1 as u16) << 8) | (dest.0 as u16);
-                write!(f, "mov [{}], {:}", dest, source)
+            Self::AccumulatorToMemory { dest, source } => {
+                let dest = (u16::from(dest.1) << 8) | u16::from(dest.0);
+                write!(f, "mov [{dest}], {source:}")
             }
         }
     }
@@ -162,32 +162,32 @@ impl fmt::Display for Instruction {
 impl fmt::Display for Reg16 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
-            Reg16::AX => "ax",
-            Reg16::CX => "cx",
-            Reg16::DX => "dx",
-            Reg16::BX => "bx",
-            Reg16::SP => "sp",
-            Reg16::BP => "bp",
-            Reg16::SI => "si",
-            Reg16::DI => "di",
+            Self::AX => "ax",
+            Self::CX => "cx",
+            Self::DX => "dx",
+            Self::BX => "bx",
+            Self::SP => "sp",
+            Self::BP => "bp",
+            Self::SI => "si",
+            Self::DI => "di",
         };
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 
 impl fmt::Display for Reg8 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
-            Reg8::AL => "al",
-            Reg8::CL => "cl",
-            Reg8::DL => "dl",
-            Reg8::BL => "bl",
-            Reg8::AH => "ah",
-            Reg8::CH => "ch",
-            Reg8::DH => "dh",
-            Reg8::BH => "bh",
+            Self::AL => "al",
+            Self::CL => "cl",
+            Self::DL => "dl",
+            Self::BL => "bl",
+            Self::AH => "ah",
+            Self::CH => "ch",
+            Self::DH => "dh",
+            Self::BH => "bh",
         };
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 
@@ -195,16 +195,16 @@ impl fmt::Display for Mod00EffectiveAddr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // For 16-bit addressing, assembly often displays memory references like [bx+si], [bp+di], etc.
         match self {
-            Mod00EffectiveAddr::BxPlusSi => write!(f, "[bx + si]"),
-            Mod00EffectiveAddr::BxPlusDi => write!(f, "[bx + di]"),
-            Mod00EffectiveAddr::BPPlusSi => write!(f, "[bp + si]"),
-            Mod00EffectiveAddr::BPPlusDi => write!(f, "[bp + di]"),
-            Mod00EffectiveAddr::Si => write!(f, "[si]"),
-            Mod00EffectiveAddr::Di => write!(f, "[di]"),
-            Mod00EffectiveAddr::Bx => write!(f, "[bx]"),
-            Mod00EffectiveAddr::DirectAddr((low, high)) => {
-                let addr = ((*high as u16) << 8) | (*low as u16);
-                write!(f, "[{:}]", addr)
+            Self::BxPlusSi => write!(f, "[bx + si]"),
+            Self::BxPlusDi => write!(f, "[bx + di]"),
+            Self::BPPlusSi => write!(f, "[bp + si]"),
+            Self::BPPlusDi => write!(f, "[bp + di]"),
+            Self::Si => write!(f, "[si]"),
+            Self::Di => write!(f, "[di]"),
+            Self::Bx => write!(f, "[bx]"),
+            Self::DirectAddr((low, high)) => {
+                let addr = (u16::from(*high) << 8) | u16::from(*low);
+                write!(f, "[{addr:}]")
             }
         }
     }
@@ -213,11 +213,11 @@ impl fmt::Display for Mod00EffectiveAddr {
 impl fmt::Display for MovOperand {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            MovOperand::Reg8(r) => write!(f, "{}", r),
-            MovOperand::Reg16(r) => write!(f, "{}", r),
-            MovOperand::Mod00(m) => write!(f, "{}", m),
-            MovOperand::Mod01(m) => write!(f, "{}", m),
-            MovOperand::Mod10(m) => write!(f, "{}", m),
+            Self::Reg8(r) => write!(f, "{r}"),
+            Self::Reg16(r) => write!(f, "{r}"),
+            Self::Mod00(m) => write!(f, "{m}"),
+            Self::Mod01(m) => write!(f, "{m}"),
+            Self::Mod10(m) => write!(f, "{m}"),
         }
     }
 }
@@ -225,34 +225,34 @@ impl fmt::Display for MovOperand {
 impl fmt::Display for EffectiveAddr<u8> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let disp = *match self {
-            EffectiveAddr::BxPlusSi(d) => d,
-            EffectiveAddr::BxPlusDi(d) => d,
-            EffectiveAddr::BPPlusSi(d) => d,
-            EffectiveAddr::BPPlusDi(d) => d,
-            EffectiveAddr::Si(d) => d,
-            EffectiveAddr::Di(d) => d,
-            EffectiveAddr::Bp(d) => d,
-            EffectiveAddr::Bx(d) => d,
+            Self::BxPlusSi(d) => d,
+            Self::BxPlusDi(d) => d,
+            Self::BPPlusSi(d) => d,
+            Self::BPPlusDi(d) => d,
+            Self::Si(d) => d,
+            Self::Di(d) => d,
+            Self::Bp(d) => d,
+            Self::Bx(d) => d,
         };
 
         // Display as a signed byte displacement in hex (e.g., +0x12, -0x0A)
         let disp_str = if disp & 0x80 != 0 {
             // negative number in signed 8-bit
             let neg = (!disp).wrapping_add(1);
-            format!("- {:}", neg)
+            format!("- {neg:}")
         } else {
-            format!("+ {:}", disp)
+            format!("+ {disp:}")
         };
 
         match self {
-            EffectiveAddr::BxPlusSi(_) => write!(f, "[bx + si {}]", disp_str),
-            EffectiveAddr::BxPlusDi(_) => write!(f, "[bx + di {}]", disp_str),
-            EffectiveAddr::BPPlusSi(_) => write!(f, "[bp + si {}]", disp_str),
-            EffectiveAddr::BPPlusDi(_) => write!(f, "[bp + di {}]", disp_str),
-            EffectiveAddr::Si(_) => write!(f, "[si {}]", disp_str),
-            EffectiveAddr::Di(_) => write!(f, "[di {}]", disp_str),
-            EffectiveAddr::Bp(_) => write!(f, "[bp {}]", disp_str),
-            EffectiveAddr::Bx(_) => write!(f, "[bx {}]", disp_str),
+            Self::BxPlusSi(_) => write!(f, "[bx + si {disp_str}]"),
+            Self::BxPlusDi(_) => write!(f, "[bx + di {disp_str}]"),
+            Self::BPPlusSi(_) => write!(f, "[bp + si {disp_str}]"),
+            Self::BPPlusDi(_) => write!(f, "[bp + di {disp_str}]"),
+            Self::Si(_) => write!(f, "[si {disp_str}]"),
+            Self::Di(_) => write!(f, "[di {disp_str}]"),
+            Self::Bp(_) => write!(f, "[bp {disp_str}]"),
+            Self::Bx(_) => write!(f, "[bx {disp_str}]"),
         }
     }
 }
@@ -260,35 +260,35 @@ impl fmt::Display for EffectiveAddr<u8> {
 impl fmt::Display for EffectiveAddr<(u8, u8)> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (low, high) = *match self {
-            EffectiveAddr::BxPlusSi(d) => d,
-            EffectiveAddr::BxPlusDi(d) => d,
-            EffectiveAddr::BPPlusSi(d) => d,
-            EffectiveAddr::BPPlusDi(d) => d,
-            EffectiveAddr::Si(d) => d,
-            EffectiveAddr::Di(d) => d,
-            EffectiveAddr::Bp(d) => d,
-            EffectiveAddr::Bx(d) => d,
+            Self::BxPlusSi(d) => d,
+            Self::BxPlusDi(d) => d,
+            Self::BPPlusSi(d) => d,
+            Self::BPPlusDi(d) => d,
+            Self::Si(d) => d,
+            Self::Di(d) => d,
+            Self::Bp(d) => d,
+            Self::Bx(d) => d,
         };
 
-        let disp = ((high as u16) << 8) | (low as u16);
+        let disp = (u16::from(high) << 8) | u16::from(low);
         // Display two-byte displacement in hex (e.g. +0x1234 or -0x1234)
         let disp_str = if disp & 0x8000 != 0 {
             // Negative in 16-bit signed
             let neg = (!disp).wrapping_add(1);
-            format!("- {:}", neg)
+            format!("- {neg:}")
         } else {
-            format!("+ {:}", disp)
+            format!("+ {disp:}")
         };
 
         match self {
-            EffectiveAddr::BxPlusSi(_) => write!(f, "[bx + si {}]", disp_str),
-            EffectiveAddr::BxPlusDi(_) => write!(f, "[bx + di {}]", disp_str),
-            EffectiveAddr::BPPlusSi(_) => write!(f, "[bp + si {}]", disp_str),
-            EffectiveAddr::BPPlusDi(_) => write!(f, "[bp + di {}]", disp_str),
-            EffectiveAddr::Si(_) => write!(f, "[si {}]", disp_str),
-            EffectiveAddr::Di(_) => write!(f, "[di {}]", disp_str),
-            EffectiveAddr::Bp(_) => write!(f, "[bp {}]", disp_str),
-            EffectiveAddr::Bx(_) => write!(f, "[bx {}]", disp_str),
+            Self::BxPlusSi(_) => write!(f, "[bx + si {disp_str}]"),
+            Self::BxPlusDi(_) => write!(f, "[bx + di {disp_str}]"),
+            Self::BPPlusSi(_) => write!(f, "[bp + si {disp_str}]"),
+            Self::BPPlusDi(_) => write!(f, "[bp + di {disp_str}]"),
+            Self::Si(_) => write!(f, "[si {disp_str}]"),
+            Self::Di(_) => write!(f, "[di {disp_str}]"),
+            Self::Bp(_) => write!(f, "[bp {disp_str}]"),
+            Self::Bx(_) => write!(f, "[bx {disp_str}]"),
         }
     }
 }
