@@ -8,29 +8,45 @@ pub struct InstructionSet {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Instruction {
-    Mov {
+    MovRegMemWithRegToEither {
         dest: MovOperand,
         source: MovOperand,
     },
-    ImmToReg8 {
+    MovImmToReg8 {
         dest: Reg8,
         source: u8,
     },
-    ImmToReg16 {
+    MovImmToReg16 {
         dest: Reg16,
         source: (u8, u8),
     },
-    ImmToMemory {
+    MovImmToMemory {
         dest: MovOperand,
         source: (u8, Option<u8>),
     },
-    MemoryToAccumulator {
+    MovMemoryToAccumulator {
         dest: AccumulatorReg,
         source: (u8, u8),
     },
-    AccumulatorToMemory {
+    MovAccumulatorToMemory {
         source: AccumulatorReg,
         dest: (u8, u8),
+    },
+    AddRegMemWithReg {
+        dest: MovOperand,
+        source: MovOperand,
+    },
+    AddImmToReg8 {
+        dest: Reg8,
+        source: u8,
+    },
+    AddImmToReg16 {
+        dest: Reg16,
+        source: (u8, u8),
+    },
+    AddImmToAcc {
+        dest: AccumulatorReg,
+        source: (u8, u8),
     },
 }
 
@@ -53,7 +69,7 @@ pub enum Reg16 {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum Reg8 {
+pub enum Reg8 {
     AL,
     CL,
     DL,
@@ -65,7 +81,7 @@ enum Reg8 {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum Mod00EffectiveAddr {
+pub enum Mod00EffectiveAddr {
     BxPlusSi,
     BxPlusDi,
     BPPlusSi,
@@ -77,7 +93,7 @@ enum Mod00EffectiveAddr {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum EffectiveAddr<T> {
+pub enum EffectiveAddr<T> {
     BxPlusSi(T),
     BxPlusDi(T),
     BPPlusSi(T),
@@ -89,7 +105,7 @@ enum EffectiveAddr<T> {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum MovOperand {
+pub enum MovOperand {
     Reg8(Reg8),
     Reg16(Reg16),
     Mod00(Mod00EffectiveAddr),
@@ -121,20 +137,20 @@ impl fmt::Display for AccumulatorReg {
 impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Mov { dest, source } => {
+            Self::MovRegMemWithRegToEither { dest, source } => {
                 write!(f, "mov {dest}, {source}")
             }
-            Self::ImmToReg8 { dest, source } => {
+            Self::MovImmToReg8 { dest, source } => {
                 write!(f, "mov {dest}, {source:}")
             }
-            Self::ImmToReg16 {
+            Self::MovImmToReg16 {
                 dest,
                 source: (low, high),
             } => {
                 let val = (u16::from(*high) << 8) | u16::from(*low);
                 write!(f, "mov {dest}, {val:}")
             }
-            Self::ImmToMemory { dest, source } => {
+            Self::MovImmToMemory { dest, source } => {
                 let byte_1 = source.0;
                 let source = match source.1 {
                     Some(byte_2) => {
@@ -147,13 +163,30 @@ impl fmt::Display for Instruction {
                 };
                 write!(f, "mov {dest}, {source:}")
             }
-            Self::MemoryToAccumulator { dest, source } => {
+            Self::MovMemoryToAccumulator { dest, source } => {
                 let source = (u16::from(source.1) << 8) | u16::from(source.0);
                 write!(f, "mov {dest}, [{source:}]")
             }
-            Self::AccumulatorToMemory { dest, source } => {
+            Self::MovAccumulatorToMemory { dest, source } => {
                 let dest = (u16::from(dest.1) << 8) | u16::from(dest.0);
                 write!(f, "mov [{dest}], {source:}")
+            }
+            Instruction::AddRegMemWithReg { dest, source } => {
+                write!(f, "add {dest}, {source}")
+            }
+            Instruction::AddImmToReg8 { dest, source } => {
+                write!(f, "add {dest}, {source:}")
+            }
+            Instruction::AddImmToReg16 {
+                dest,
+                source: (low, high),
+            } => {
+                let val = (u16::from(*high) << 8) | u16::from(*low);
+                write!(f, "add {dest}, {val:}")
+            }
+            Instruction::AddImmToAcc { dest, source } => {
+                let source = (u16::from(source.1) << 8) | u16::from(source.0);
+                write!(f, "add {dest}, [{source:}]")
             }
         }
     }

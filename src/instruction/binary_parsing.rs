@@ -1,9 +1,5 @@
 use crate::instruction::{AccumulatorReg, MovOperand};
 
-// done: for listing 40: go to text and try to find "negative address displacements"
-// done - for handling "word", "byte" from asm -- that's "immediate to register/memory move" (new opcode)
-// - ax special handling "memory to accumulator" and "accumulator to memory" (new opcodestn)
-
 use super::{EffectiveAddr, Instruction, InstructionSet, Mod00EffectiveAddr, Reg16, Reg8};
 
 impl InstructionSet {
@@ -42,41 +38,55 @@ impl Instruction {
     #[must_use]
     pub fn from_byte<I: Iterator<Item = u8>>(mut bytes: I) -> Option<Self> {
         mod opcodes {
-            pub(crate) const REG_MEM_TO_FROM_REG: u8 = 0b____10001000_u8;
-            pub(crate) const REG_MEM_TO_FROM_REG_MAX: u8 = 0b10001011_u8;
+            pub(crate) const MOV_REG_MEM_TO_FROM_REG: u8 = 0b____10001000_u8;
+            pub(crate) const MOV_REG_MEM_TO_FROM_REG_MAX: u8 = 0b10001011_u8 + 1;
 
-            pub(crate) const IMMEDIATE_TO_REG: u8 = 0b_______10110000_u8;
-            pub(crate) const IMMEDIATE_TO_REG_MAX: u8 = 0b___10111111_u8;
+            pub(crate) const MOV_IMMEDIATE_TO_REG: u8 = 0b_______10110000_u8;
+            pub(crate) const MOV_IMMEDIATE_TO_REG_MAX: u8 = 0b___10111111_u8 + 1;
 
-            pub(crate) const IMMEDIATE_TO_REG_MEM: u8 = 0b_______11000110_u8;
-            pub(crate) const IMMEDIATE_TO_REG_MEM_MAX: u8 = 0b___11000111_u8;
+            pub(crate) const MOV_IMMEDIATE_TO_REG_MEM: u8 = 0b_______11000110_u8;
+            pub(crate) const MOV_IMMEDIATE_TO_REG_MEM_MAX: u8 = 0b___11000111_u8 + 1;
 
-            pub(crate) const MEMORY_TO_ACCUMULATOR: u8 = 0b_______10100000_u8;
-            pub(crate) const MEMORY_TO_ACCUMULATOR_MAX: u8 = 0b___10100001_u8;
+            pub(crate) const MOV_MEMORY_TO_ACCUMULATOR: u8 = 0b_______10100000_u8;
+            pub(crate) const MOV_MEMORY_TO_ACCUMULATOR_MAX: u8 = 0b___10100001_u8 + 1;
 
-            pub(crate) const ACCUMULATOR_TO_MEMORY: u8 = 0b_______10100010_u8;
-            pub(crate) const ACCUMULATOR_TO_MEMORY_MAX: u8 = 0b___10100011_u8;
+            pub(crate) const MOV_ACCUMULATOR_TO_MEMORY: u8 = 0b_______10100010_u8;
+            pub(crate) const MOV_ACCUMULATOR_TO_MEMORY_MAX: u8 = 0b___10100011_u8 + 1;
 
-            pub(crate) const REG_MEM_WITH_REG_O_EITHER: u8 = 0b_______10100010_u8;
-            pub(crate) const REG_MEM_WITH_REG_O_EITHER_MAX: u8 = 0b___10100011_u8;
+            pub(crate) const ADD_REG_MEM_WITH_REG_TO_EITHER: u8 = 0b____00000000_u8;
+            pub(crate) const ADD_REG_MEM_WITH_REG_TO_EITHER_MAX: u8 = 0b00000011_u8 + 1;
+
+            pub(crate) const ADD_IMM_TO_REG_OR_MEMORY: u8 = 0b____10000000_u8;
+            pub(crate) const ADD_IMM_TO_REG_OR_MEMORY_MAX: u8 = 0b10000011_u8 + 1;
+
+            pub(crate) const ADD_IMM_TO_ACCUMULATOR: u8 = 0b____00000100_u8;
+            pub(crate) const ADD_IMM_TO_ACCUMULATOR_MAX: u8 = 0b00000101_u8 + 1;
         }
 
         let first_byte = bytes.next().unwrap();
         let ix = match first_byte {
-            opcodes::REG_MEM_TO_FROM_REG..=opcodes::REG_MEM_TO_FROM_REG_MAX => {
+            opcodes::MOV_REG_MEM_TO_FROM_REG..opcodes::MOV_REG_MEM_TO_FROM_REG_MAX => {
                 decode_mov(&mut bytes, first_byte)
             }
-            opcodes::IMMEDIATE_TO_REG..=opcodes::IMMEDIATE_TO_REG_MAX => {
+            opcodes::MOV_IMMEDIATE_TO_REG..opcodes::MOV_IMMEDIATE_TO_REG_MAX => {
                 decode_immediate_to_reg(first_byte, &mut bytes)
             }
-            opcodes::IMMEDIATE_TO_REG_MEM..=opcodes::IMMEDIATE_TO_REG_MEM_MAX => {
+            opcodes::MOV_IMMEDIATE_TO_REG_MEM..opcodes::MOV_IMMEDIATE_TO_REG_MEM_MAX => {
                 decode_immediate_to_reg_mem(&mut bytes, first_byte)
             }
-            opcodes::MEMORY_TO_ACCUMULATOR..=opcodes::MEMORY_TO_ACCUMULATOR_MAX => {
+            opcodes::MOV_MEMORY_TO_ACCUMULATOR..opcodes::MOV_MEMORY_TO_ACCUMULATOR_MAX => {
                 decode_mem_to_acc(first_byte, &mut bytes)
             }
-            opcodes::ACCUMULATOR_TO_MEMORY..=opcodes::ACCUMULATOR_TO_MEMORY_MAX => {
+            opcodes::MOV_ACCUMULATOR_TO_MEMORY..opcodes::MOV_ACCUMULATOR_TO_MEMORY_MAX => {
                 decode_acc_to_mem(first_byte, bytes)
+            }
+            opcodes::ADD_REG_MEM_WITH_REG_TO_EITHER
+                ..opcodes::ADD_REG_MEM_WITH_REG_TO_EITHER_MAX => decode_add(&mut bytes, first_byte),
+            opcodes::ADD_IMM_TO_REG_OR_MEMORY..opcodes::ADD_IMM_TO_REG_OR_MEMORY_MAX => {
+                return None;
+            }
+            opcodes::ADD_IMM_TO_ACCUMULATOR..opcodes::ADD_IMM_TO_ACCUMULATOR_MAX => {
+                return None;
             }
             _ => {
                 return None;
@@ -104,7 +114,7 @@ fn decode_acc_to_mem<I: Iterator<Item = u8>>(first_byte: u8, mut bytes: I) -> In
     let addr_low = bytes.next().unwrap();
     let addr_high = bytes.next().unwrap();
 
-    Instruction::AccumulatorToMemory {
+    Instruction::MovAccumulatorToMemory {
         source,
         dest: (addr_low, addr_high),
     }
@@ -123,7 +133,7 @@ fn decode_mem_to_acc<I: Iterator<Item = u8>>(first_byte: u8, bytes: &mut I) -> I
     let addr_low = bytes.next().unwrap();
     let addr_high = bytes.next().unwrap();
 
-    Instruction::MemoryToAccumulator {
+    Instruction::MovMemoryToAccumulator {
         dest: destination,
         source: (addr_low, addr_high),
     }
@@ -163,20 +173,20 @@ fn decode_immediate_to_reg_mem<I: Iterator<Item = u8>>(
             let dest = reg_to_mov_operand(&word, rm);
             let source = get_source(bytes);
 
-            Instruction::ImmToMemory { dest, source }
+            Instruction::MovImmToMemory { dest, source }
         }
         memory_mode::MEM_M_NO_DISPLACEMENT => {
             let dest = decode_mod00_rm(rm, &mut bytes);
             let source = get_source(&mut bytes);
 
-            Instruction::ImmToMemory { dest, source }
+            Instruction::MovImmToMemory { dest, source }
         }
         memory_mode::MEM_M_8_BIT_DISPLACEMENT => {
             let low_disp_byte = bytes.next().unwrap();
             let rm = decode_mod01_mod02_rm(rm, low_disp_byte);
             let source = get_source(bytes);
 
-            Instruction::ImmToMemory {
+            Instruction::MovImmToMemory {
                 dest: MovOperand::Mod01(rm),
                 source,
             }
@@ -188,7 +198,7 @@ fn decode_immediate_to_reg_mem<I: Iterator<Item = u8>>(
             let rm = decode_mod01_mod02_rm(rm, (low_disp_byte, high_disp_byte));
             let source = get_source(bytes);
 
-            Instruction::ImmToMemory {
+            Instruction::MovImmToMemory {
                 dest: MovOperand::Mod10(rm),
                 source,
             }
@@ -210,7 +220,7 @@ fn decode_immediate_to_reg<I: Iterator<Item = u8>>(first_byte: u8, bytes: &mut I
             let reg = decode_reg16(reg);
             let data_byte_1 = bytes.next().unwrap();
             let data_byte_2 = bytes.next().unwrap();
-            Instruction::ImmToReg16 {
+            Instruction::MovImmToReg16 {
                 dest: reg,
                 source: (data_byte_1, data_byte_2),
             }
@@ -218,13 +228,21 @@ fn decode_immediate_to_reg<I: Iterator<Item = u8>>(first_byte: u8, bytes: &mut I
         word_modes::W_M_8B_WORD => {
             let reg = decode_reg8(reg);
             let data_byte_1 = bytes.next().unwrap();
-            Instruction::ImmToReg8 {
+            Instruction::MovImmToReg8 {
                 dest: reg,
                 source: (data_byte_1),
             }
         }
         _ => unreachable!(),
     }
+}
+
+fn decode_add<I: Iterator<Item = u8>>(bytes: &mut I, first_byte: u8) -> Instruction {
+    let ix = decode_mov(bytes, first_byte);
+    let Instruction::MovRegMemWithRegToEither { dest, source } = ix else {
+        unreachable!()
+    };
+    Instruction::AddRegMemWithReg { dest, source }
 }
 
 fn decode_mov<I: Iterator<Item = u8>>(bytes: &mut I, first_byte: u8) -> Instruction {
@@ -262,7 +280,7 @@ fn decode_mov<I: Iterator<Item = u8>>(bytes: &mut I, first_byte: u8) -> Instruct
             let source = reg_to_mov_operand(&word, register_operand1 >> 3);
             let dest = reg_to_mov_operand(&word, register_operand2);
 
-            Instruction::Mov { dest, source }
+            Instruction::MovRegMemWithRegToEither { dest, source }
         }
         memory_mode::MEM_M_NO_DISPLACEMENT => {
             let reg = reg_to_mov_operand(&word, register_operand1 >> 3);
@@ -273,7 +291,7 @@ fn decode_mov<I: Iterator<Item = u8>>(bytes: &mut I, first_byte: u8) -> Instruct
                 dir_mode::W_M_REG_HAS_IX_DEST => (rm, reg),
                 _ => unreachable!(),
             };
-            Instruction::Mov { dest, source }
+            Instruction::MovRegMemWithRegToEither { dest, source }
         }
         memory_mode::MEM_M_8_BIT_DISPLACEMENT => {
             let low_disp_byte = bytes.next().unwrap();
@@ -285,7 +303,7 @@ fn decode_mov<I: Iterator<Item = u8>>(bytes: &mut I, first_byte: u8) -> Instruct
                 dir_mode::W_M_REG_HAS_IX_DEST => (MovOperand::Mod01(rm), reg),
                 _ => unreachable!(),
             };
-            Instruction::Mov { dest, source }
+            Instruction::MovRegMemWithRegToEither { dest, source }
         }
         memory_mode::MEM_M_16_BIT_DISPLACEMENT => {
             let low_disp_byte = bytes.next().unwrap();
@@ -298,7 +316,7 @@ fn decode_mov<I: Iterator<Item = u8>>(bytes: &mut I, first_byte: u8) -> Instruct
                 dir_mode::W_M_REG_HAS_IX_DEST => (MovOperand::Mod10(rm), reg),
                 _ => unreachable!(),
             };
-            Instruction::Mov { dest, source }
+            Instruction::MovRegMemWithRegToEither { dest, source }
         }
         _ => unimplemented!("we only support reg to reg movement"),
     }
