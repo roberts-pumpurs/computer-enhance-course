@@ -24,6 +24,16 @@ pub enum Instruction {
         dest: MovOperand,
         source: (u8, Option<u8>),
     },
+    MemoryToAccumulator {
+        dest: AccumulatorReg,
+        source: (u8, u8),
+    },
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum AccumulatorReg {
+    Ax,
+    Al,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -94,6 +104,16 @@ impl fmt::Display for InstructionSet {
     }
 }
 
+impl fmt::Display for AccumulatorReg {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            AccumulatorReg::Ax => "ax",
+            AccumulatorReg::Al => "al",
+        };
+        write!(f, "{}", s)
+    }
+}
+
 impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -122,6 +142,10 @@ impl fmt::Display for Instruction {
                     }
                 };
                 write!(f, "mov {}, {:}", dest, source)
+            }
+            Instruction::MemoryToAccumulator { dest, source } => {
+                let source = ((source.1 as u16) << 8) | (source.0 as u16);
+                write!(f, "mov {}, [{:}]", dest, source)
             }
         }
     }

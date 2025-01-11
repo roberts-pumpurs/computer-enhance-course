@@ -1,7 +1,7 @@
-use crate::instruction::MovOperand;
+use crate::instruction::{AccumulatorReg, MovOperand};
 
-//  done: for listing 40: go to text and try to find "negative address displacements"
-//  WIP - for handling "word", "byte" from asm -- that's "immediate to register/memory move" (new opcode)
+// done: for listing 40: go to text and try to find "negative address displacements"
+// done - for handling "word", "byte" from asm -- that's "immediate to register/memory move" (new opcode)
 // - ax special handling "memory to accumulator" and "accumulator to memory" (new opcodestn)
 
 use super::{EffectiveAddr, Instruction, InstructionSet, Mod00EffectiveAddr, Reg16, Reg8};
@@ -43,6 +43,9 @@ impl Instruction {
 
             pub(crate) const IMMEDIATE_TO_REG_MEM: u8 = 0b_______11000110_u8;
             pub(crate) const IMMEDIATE_TO_REG_MEM_MAX: u8 = 0b___11000111_u8;
+
+            pub(crate) const MEMORY_TO_ACCUMULATOR: u8 = 0b_______10100000_u8;
+            pub(crate) const MEMORY_TO_ACCUMULATOR_MAX: u8 = 0b___10100001_u8;
         }
         mod memory_mode {
             pub(crate) const MEM_M_NO_DISPLACEMENT: u8 = 0b____00000000_u8;
@@ -223,6 +226,24 @@ impl Instruction {
                         }
                     }
                     _ => unimplemented!("we only support reg to reg movement"),
+                }
+            }
+            opcodes::MEMORY_TO_ACCUMULATOR..=opcodes::MEMORY_TO_ACCUMULATOR_MAX => {
+                mod masks {
+                    pub(crate) const WOR: u8 = 0b00000001_u8;
+                }
+                let wide = first_byte & masks::WOR;
+                let destination = if wide > 0 {
+                    AccumulatorReg::Ax
+                } else {
+                    AccumulatorReg::Al
+                };
+                let addr_low = bytes.next().unwrap();
+                let addr_high = bytes.next().unwrap();
+
+                Self::MemoryToAccumulator {
+                    dest: destination,
+                    source: (addr_low, addr_high),
                 }
             }
             _ => {
