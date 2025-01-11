@@ -28,6 +28,10 @@ pub enum Instruction {
         dest: AccumulatorReg,
         source: (u8, u8),
     },
+    AccumulatorToMemory {
+        source: AccumulatorReg,
+        dest: (u8, u8),
+    },
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -146,6 +150,10 @@ impl fmt::Display for Instruction {
             Instruction::MemoryToAccumulator { dest, source } => {
                 let source = ((source.1 as u16) << 8) | (source.0 as u16);
                 write!(f, "mov {}, [{:}]", dest, source)
+            }
+            Instruction::AccumulatorToMemory { dest, source } => {
+                let dest = ((dest.1 as u16) << 8) | (dest.0 as u16);
+                write!(f, "mov [{}], {:}", dest, source)
             }
         }
     }

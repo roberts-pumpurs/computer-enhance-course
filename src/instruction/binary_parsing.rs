@@ -46,6 +46,9 @@ impl Instruction {
 
             pub(crate) const MEMORY_TO_ACCUMULATOR: u8 = 0b_______10100000_u8;
             pub(crate) const MEMORY_TO_ACCUMULATOR_MAX: u8 = 0b___10100001_u8;
+
+            pub(crate) const ACCUMULATOR_TO_MEMORY: u8 = 0b_______10100010_u8;
+            pub(crate) const ACCUMULATOR_TO_MEMORY_MAX: u8 = 0b___10100011_u8;
         }
         mod memory_mode {
             pub(crate) const MEM_M_NO_DISPLACEMENT: u8 = 0b____00000000_u8;
@@ -246,6 +249,24 @@ impl Instruction {
                     source: (addr_low, addr_high),
                 }
             }
+            opcodes::ACCUMULATOR_TO_MEMORY..=opcodes::ACCUMULATOR_TO_MEMORY_MAX => {
+                mod masks {
+                    pub(crate) const WOR: u8 = 0b00000001_u8;
+                }
+                let wide = first_byte & masks::WOR;
+                let source = if wide > 0 {
+                    AccumulatorReg::Ax
+                } else {
+                    AccumulatorReg::Al
+                };
+                let addr_low = bytes.next().unwrap();
+                let addr_high = bytes.next().unwrap();
+
+                Self::AccumulatorToMemory {
+                    source,
+                    dest: (addr_low, addr_high),
+                }
+            }
             _ => {
                 return None;
             }
@@ -306,7 +327,6 @@ fn decode_mod00_rm<I: Iterator<Item = u8>>(rm: u8, mut bytes: I) -> MovOperand {
 }
 
 fn decode_mod01_mod02_rm<T>(rm: u8, addr: T) -> EffectiveAddr<T> {
-    dbg!(rm);
     match rm {
         0b000 => EffectiveAddr::BxPlusSi(addr),
         0b001 => EffectiveAddr::BxPlusDi(addr),
@@ -343,6 +363,7 @@ mod tests {
 
     fn generate_and_compare_machine_code(test: &str, ix_set: &InstructionSet) {
         let output = format!("{ix_set:}");
+        println!("output {output:}");
         let sh = xshell::Shell::new().unwrap();
         let fixture_machine_code_file = sh.current_dir().join("fixtures").join(format!("{test:}"));
         let fixture_asm_code_file = sh
