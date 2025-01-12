@@ -1,6 +1,12 @@
+use num_derive::FromPrimitive;
+use num_traits::FromPrimitive;
+
 use crate::instruction::{AccumulatorReg, MovOperand};
 
 use super::{EffectiveAddr, Instruction, InstructionSet, Mod00EffectiveAddr, Reg16, Reg8};
+
+// todo left off at adding all add ixs https://www.computerenhance.com/p/opcode-patterns-in-8086-arithmetic
+// also remember this `In the table you’ll see: “data | data if s: w = 01”. So there is only a second data byte if s is 0 and w is 1.`
 
 impl InstructionSet {
     #[must_use]
@@ -22,13 +28,6 @@ impl InstructionSet {
     }
 }
 
-mod memory_mode {
-    pub(crate) const MEM_M_NO_DISPLACEMENT: u8 = 0b____00000000_u8;
-    pub(crate) const MEM_M_8_BIT_DISPLACEMENT: u8 = 0b_01000000_u8;
-    pub(crate) const MEM_M_16_BIT_DISPLACEMENT: u8 = 0b10000000_u8;
-    pub(crate) const MEM_M_REGISTER_MODE: u8 = 0b______11000000_u8;
-}
-
 impl Instruction {
     #[must_use]
     pub fn from_byte<I: Iterator<Item = u8>>(mut bytes: I) -> Option<Self> {
@@ -36,11 +35,11 @@ impl Instruction {
             pub(crate) const MOV_REG_MEM_TO_FROM_REG: u8 = 0b____10001000_u8;
             pub(crate) const MOV_REG_MEM_TO_FROM_REG_MAX: u8 = 0b10001011_u8 + 1;
 
-            pub(crate) const MOV_IMMEDIATE_TO_REG: u8 = 0b_______10110000_u8;
-            pub(crate) const MOV_IMMEDIATE_TO_REG_MAX: u8 = 0b___10111111_u8 + 1;
-
             pub(crate) const MOV_IMMEDIATE_TO_REG_MEM: u8 = 0b_______11000110_u8;
             pub(crate) const MOV_IMMEDIATE_TO_REG_MEM_MAX: u8 = 0b___11000111_u8 + 1;
+
+            pub(crate) const MOV_IMMEDIATE_TO_REG: u8 = 0b_______10110000_u8;
+            pub(crate) const MOV_IMMEDIATE_TO_REG_MAX: u8 = 0b___10111111_u8 + 1;
 
             pub(crate) const MOV_MEMORY_TO_ACCUMULATOR: u8 = 0b_______10100000_u8;
             pub(crate) const MOV_MEMORY_TO_ACCUMULATOR_MAX: u8 = 0b___10100001_u8 + 1;
@@ -60,32 +59,35 @@ impl Instruction {
 
         let first_byte = bytes.next().unwrap();
         let ix = match first_byte {
+            // mov ixs
             opcodes::MOV_REG_MEM_TO_FROM_REG..opcodes::MOV_REG_MEM_TO_FROM_REG_MAX => {
-                decode_mov(&mut bytes, first_byte)
-            }
-            opcodes::MOV_IMMEDIATE_TO_REG..opcodes::MOV_IMMEDIATE_TO_REG_MAX => {
-                decode_immediate_to_reg(first_byte, &mut bytes)
+                decode_mov_reg_mem_to_from_reg(&mut bytes, first_byte)
             }
             opcodes::MOV_IMMEDIATE_TO_REG_MEM..opcodes::MOV_IMMEDIATE_TO_REG_MEM_MAX => {
-                decode_immediate_to_reg_mem(&mut bytes, first_byte)
+                decode_mov_immediate_to_reg_mem(&mut bytes, first_byte)
+            }
+            opcodes::MOV_IMMEDIATE_TO_REG..opcodes::MOV_IMMEDIATE_TO_REG_MAX => {
+                decode_mov_immediate_to_reg(first_byte, &mut bytes)
             }
             opcodes::MOV_MEMORY_TO_ACCUMULATOR..opcodes::MOV_MEMORY_TO_ACCUMULATOR_MAX => {
-                decode_mem_to_acc(first_byte, &mut bytes)
+                decode_mov_mem_to_acc(first_byte, &mut bytes)
             }
             opcodes::MOV_ACCUMULATOR_TO_MEMORY..opcodes::MOV_ACCUMULATOR_TO_MEMORY_MAX => {
-                decode_acc_to_mem(first_byte, bytes)
+                decode_mov_acc_to_mem(first_byte, bytes)
             }
+            // add ixs
             opcodes::ADD_REG_MEM_WITH_REG_TO_EITHER
                 ..opcodes::ADD_REG_MEM_WITH_REG_TO_EITHER_MAX => {
                 decode_add_reg_mem_to_either(&mut bytes, first_byte)
             }
             opcodes::ADD_IMM_TO_REG_OR_MEMORY..opcodes::ADD_IMM_TO_REG_OR_MEMORY_MAX => {
-                return None;
+                decode_add_immediate_to_reg(first_byte, &mut bytes)
             }
             opcodes::ADD_IMM_TO_ACCUMULATOR..opcodes::ADD_IMM_TO_ACCUMULATOR_MAX => {
-                return None;
+                decode_add_imm_to_acc(first_byte, &mut bytes)
             }
             _ => {
+                println!("{first_byte:08b}");
                 return None;
             }
         };
@@ -102,7 +104,40 @@ fn is_wide(byte: u8) -> bool {
     wide > 0
 }
 
-fn decode_acc_to_mem<I: Iterator<Item = u8>>(first_byte: u8, mut bytes: I) -> Instruction {
+#[derive(Debug, FromPrimitive)]
+#[repr(u8)]
+enum MemoryMode {
+    NoDisplacement = 0b___00000000_u8,
+    Bit8Displacement = 0b_00000001_u8,
+    Bit16Displacement = 0b00000010_u8,
+    RegisterMode = 0b_____00000011_u8,
+}
+
+fn memory_mode(byte: u8) -> MemoryMode {
+    pub(crate) const MOD: u8 = 0b00000011u8;
+    let byte = byte & MOD;
+    MemoryMode::from_u8(byte).unwrap()
+}
+
+fn reg_rm(byte: u8) -> u8 {
+    pub(crate) const REG_RM: u8 = 0b00000111u8;
+    let byte = byte & REG_RM;
+    byte
+}
+
+#[derive(Debug, FromPrimitive, PartialEq, Eq)]
+#[repr(u8)]
+enum DirMode {
+    RegIsSource = 0b______00000000_u8,
+    RegIsDestination = 0b_00000001_u8,
+}
+fn dir(byte: u8) -> DirMode {
+    pub(crate) const DIR: u8 = 0b00000001u8;
+    let byte = byte & DIR;
+    DirMode::from_u8(byte).unwrap()
+}
+
+fn decode_mov_acc_to_mem<I: Iterator<Item = u8>>(first_byte: u8, mut bytes: I) -> Instruction {
     let source = if is_wide(first_byte) {
         AccumulatorReg::Ax
     } else {
@@ -117,7 +152,7 @@ fn decode_acc_to_mem<I: Iterator<Item = u8>>(first_byte: u8, mut bytes: I) -> In
     }
 }
 
-fn decode_mem_to_acc<I: Iterator<Item = u8>>(first_byte: u8, bytes: &mut I) -> Instruction {
+fn decode_mov_mem_to_acc<I: Iterator<Item = u8>>(first_byte: u8, bytes: &mut I) -> Instruction {
     let destination = if is_wide(first_byte) {
         AccumulatorReg::Ax
     } else {
@@ -132,21 +167,22 @@ fn decode_mem_to_acc<I: Iterator<Item = u8>>(first_byte: u8, bytes: &mut I) -> I
     }
 }
 
-fn decode_immediate_to_reg_mem<I: Iterator<Item = u8>>(
+fn decode_add_imm_to_acc<I: Iterator<Item = u8>>(first_byte: u8, bytes: &mut I) -> Instruction {
+    let ix = decode_mov_mem_to_acc(first_byte, bytes);
+    let Instruction::MovMemoryToAccumulator { dest, source } = ix else {
+        unreachable!()
+    };
+    Instruction::AddImmToAcc { dest, source }
+}
+
+fn decode_mov_immediate_to_reg_mem<I: Iterator<Item = u8>>(
     mut bytes: &mut I,
     first_byte: u8,
 ) -> Instruction {
-    mod masks {
-        pub(crate) const WOR: u8 = 0b00000001_u8;
-        pub(crate) const MOD: u8 = 0b________11100000_u8;
-        pub(crate) const RM: u8 = 0b_________00000111_u8;
-    }
-
     let second_byte = bytes.next().unwrap();
-
     let is_wide = is_wide(first_byte);
-    let memory_mode = second_byte & masks::MOD;
-    let rm = second_byte & masks::RM;
+    let memory_mode = memory_mode(second_byte >> 6);
+    let rm = reg_rm(second_byte);
 
     let get_source = |bytes: &mut I| {
         let immediate_byte_1 = bytes.next().unwrap();
@@ -159,19 +195,19 @@ fn decode_immediate_to_reg_mem<I: Iterator<Item = u8>>(
     };
 
     match memory_mode {
-        memory_mode::MEM_M_REGISTER_MODE => {
+        MemoryMode::RegisterMode => {
             let dest = reg_to_mov_operand(is_wide, rm);
             let source = get_source(bytes);
 
             Instruction::MovImmToMemory { dest, source }
         }
-        memory_mode::MEM_M_NO_DISPLACEMENT => {
+        MemoryMode::NoDisplacement => {
             let dest = decode_mod00_rm(rm, &mut bytes);
             let source = get_source(&mut bytes);
 
             Instruction::MovImmToMemory { dest, source }
         }
-        memory_mode::MEM_M_8_BIT_DISPLACEMENT => {
+        MemoryMode::Bit8Displacement => {
             let low_disp_byte = bytes.next().unwrap();
             let rm = decode_mod01_mod02_rm(rm, low_disp_byte);
             let source = get_source(bytes);
@@ -181,7 +217,7 @@ fn decode_immediate_to_reg_mem<I: Iterator<Item = u8>>(
                 source,
             }
         }
-        memory_mode::MEM_M_16_BIT_DISPLACEMENT => {
+        MemoryMode::Bit16Displacement => {
             let low_disp_byte = bytes.next().unwrap();
             let high_disp_byte = bytes.next().unwrap();
 
@@ -193,17 +229,15 @@ fn decode_immediate_to_reg_mem<I: Iterator<Item = u8>>(
                 source,
             }
         }
-        _ => unimplemented!("we only support reg to reg movement"),
     }
 }
 
-fn decode_immediate_to_reg<I: Iterator<Item = u8>>(first_byte: u8, bytes: &mut I) -> Instruction {
-    mod masks {
-        pub(crate) const REG: u8 = 0b00000111_u8;
-    }
-
+fn decode_mov_immediate_to_reg<I: Iterator<Item = u8>>(
+    first_byte: u8,
+    bytes: &mut I,
+) -> Instruction {
     let wide = is_wide(first_byte >> 3);
-    let reg = first_byte & masks::REG;
+    let reg = reg_rm(first_byte);
     if wide {
         let reg = decode_reg16(reg);
         let data_byte_1 = bytes.next().unwrap();
@@ -225,86 +259,83 @@ fn decode_add_reg_mem_to_either<I: Iterator<Item = u8>>(
     bytes: &mut I,
     first_byte: u8,
 ) -> Instruction {
-    let ix = decode_mov(bytes, first_byte);
+    let ix = decode_mov_reg_mem_to_from_reg(bytes, first_byte);
     let Instruction::MovRegMemWithRegToEither { dest, source } = ix else {
         unreachable!()
     };
     Instruction::AddRegMemWithReg { dest, source }
 }
 
-fn decode_mov<I: Iterator<Item = u8>>(bytes: &mut I, first_byte: u8) -> Instruction {
-    mod masks {
-        pub(crate) const DIR: u8 = 0b00000010_u8;
-        pub(crate) const MOD: u8 = 0b________11000000_u8;
-        pub(crate) const RG1: u8 = 0b________00111000_u8;
-        pub(crate) const RG2: u8 = 0b________00000111_u8;
+fn decode_add_immediate_to_reg<I: Iterator<Item = u8>>(
+    first_byte: u8,
+    bytes: &mut I,
+) -> Instruction {
+    let ix = decode_mov_immediate_to_reg(first_byte, bytes);
+    match ix {
+        Instruction::MovImmToReg8 { dest, source } => Instruction::AddImmToReg8 { dest, source },
+        Instruction::MovImmToReg16 { dest, source } => Instruction::AddImmToReg16 { dest, source },
+        _ => unreachable!(),
     }
+}
 
-    mod dir_mode {
-        // reg is the source
-        pub(crate) const D_M_REG_HAS_IX_SOURCE: u8 = 0b00000000_u8;
-        // reg is the destination
-        pub(crate) const W_M_REG_HAS_IX_DEST: u8 = 0b__00000010_u8;
-    }
-
+fn decode_mov_reg_mem_to_from_reg<I: Iterator<Item = u8>>(
+    bytes: &mut I,
+    first_byte: u8,
+) -> Instruction {
     let second_byte = bytes.next().unwrap();
 
-    let direction = first_byte & masks::DIR;
+    let direction = dir(first_byte >> 1);
     let is_wide = is_wide(first_byte);
-    let memory_mode = second_byte & masks::MOD;
-    let register_operand1 = second_byte & masks::RG1;
-    let register_operand2 = second_byte & masks::RG2;
+    let memory_mode = memory_mode(second_byte >> 6);
+    let register_operand1 = reg_rm(second_byte >> 3);
+    let register_operand2 = reg_rm(second_byte);
 
     match memory_mode {
-        memory_mode::MEM_M_REGISTER_MODE => {
+        MemoryMode::RegisterMode => {
             assert_eq!(
                 direction,
-                dir_mode::D_M_REG_HAS_IX_SOURCE,
+                DirMode::RegIsSource,
                 "reg mode always has all the bytes it needs"
             );
 
-            let source = reg_to_mov_operand(is_wide, register_operand1 >> 3);
+            let source = reg_to_mov_operand(is_wide, register_operand1);
             let dest = reg_to_mov_operand(is_wide, register_operand2);
 
             Instruction::MovRegMemWithRegToEither { dest, source }
         }
-        memory_mode::MEM_M_NO_DISPLACEMENT => {
-            let reg = reg_to_mov_operand(is_wide, register_operand1 >> 3);
+        MemoryMode::NoDisplacement => {
+            let reg = reg_to_mov_operand(is_wide, register_operand1);
             let rm = decode_mod00_rm(register_operand2, bytes);
 
             let (source, dest) = match direction {
-                dir_mode::D_M_REG_HAS_IX_SOURCE => (reg, rm),
-                dir_mode::W_M_REG_HAS_IX_DEST => (rm, reg),
-                _ => unreachable!(),
+                DirMode::RegIsSource => (reg, rm),
+                DirMode::RegIsDestination => (rm, reg),
             };
             Instruction::MovRegMemWithRegToEither { dest, source }
         }
-        memory_mode::MEM_M_8_BIT_DISPLACEMENT => {
+        MemoryMode::Bit8Displacement => {
             let low_disp_byte = bytes.next().unwrap();
-            let reg = reg_to_mov_operand(is_wide, register_operand1 >> 3);
+            let reg = reg_to_mov_operand(is_wide, register_operand1);
             let rm = decode_mod01_mod02_rm(register_operand2, low_disp_byte);
 
             let (source, dest) = match direction {
-                dir_mode::D_M_REG_HAS_IX_SOURCE => (reg, MovOperand::Mod01(rm)),
-                dir_mode::W_M_REG_HAS_IX_DEST => (MovOperand::Mod01(rm), reg),
-                _ => unreachable!(),
+                DirMode::RegIsSource => (reg, MovOperand::Mod01(rm)),
+                DirMode::RegIsDestination => (MovOperand::Mod01(rm), reg),
             };
             Instruction::MovRegMemWithRegToEither { dest, source }
         }
-        memory_mode::MEM_M_16_BIT_DISPLACEMENT => {
+        MemoryMode::Bit16Displacement => {
             let low_disp_byte = bytes.next().unwrap();
             let high_disp_byte = bytes.next().unwrap();
 
-            let reg = reg_to_mov_operand(is_wide, register_operand1 >> 3);
+            let reg = reg_to_mov_operand(is_wide, register_operand1);
             let rm = decode_mod01_mod02_rm(register_operand2, (low_disp_byte, high_disp_byte));
             let (source, dest) = match direction {
-                dir_mode::D_M_REG_HAS_IX_SOURCE => (reg, MovOperand::Mod10(rm)),
-                dir_mode::W_M_REG_HAS_IX_DEST => (MovOperand::Mod10(rm), reg),
-                _ => unreachable!(),
+                DirMode::RegIsSource => (reg, MovOperand::Mod10(rm)),
+                DirMode::RegIsDestination => (MovOperand::Mod10(rm), reg),
             };
             Instruction::MovRegMemWithRegToEither { dest, source }
         }
-        _ => unimplemented!("we only support reg to reg movement"),
     }
 }
 
@@ -377,7 +408,7 @@ mod tests {
     use std::{fs::File, io::Write as _};
 
     use itertools::Itertools as _;
-    use pretty_assertions::assert_eq;
+    use pretty_assertions::{assert_eq, assert_str_eq};
     use tempdir::TempDir;
     use xshell::cmd;
 
@@ -392,7 +423,6 @@ mod tests {
 
     fn generate_and_compare_machine_code(test: &str, ix_set: &InstructionSet) {
         let output = format!("{ix_set:}");
-        println!("output {output:}");
         let sh = xshell::Shell::new().unwrap();
         let fixture_machine_code_file = sh.current_dir().join("fixtures").join(test);
         let fixture_asm_code_file = sh
@@ -424,9 +454,8 @@ mod tests {
 
         // read the generated binary
         let content_binary = sh.read_binary_file(&machine_code_output_file).unwrap();
-        dbg!(ix_set);
         if content_binary != expected_content {
-            assert_eq!(expected_asm_content, output);
+            assert_str_eq!(expected_asm_content, output);
         }
         assert_eq!(content_binary, expected_content);
     }
