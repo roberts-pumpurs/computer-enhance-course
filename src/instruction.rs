@@ -114,6 +114,7 @@ use std::fmt;
 
 impl fmt::Display for InstructionSet {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "bits 16")?;
         for (idx, instr) in &self.instructions {
             writeln!(f, "{instr} ; {idx:?}")?;
             // writeln!(f, "{instr}")?;
