@@ -2,7 +2,7 @@ mod binary_parsing;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct InstructionSet {
-    pub instructions: Vec<Instruction>,
+    pub instructions: Vec<(usize, Instruction)>,
     pub bits: u8,
 }
 
@@ -36,18 +36,15 @@ pub enum Instruction {
         dest: MovOperand,
         source: MovOperand,
     },
-    AddImmToReg8 {
-        dest: Reg8,
-        source: u8,
-    },
-    AddImmToReg16 {
-        dest: Reg16,
-        source: (u8, u8),
+    AddImmToMemory {
+        dest: MovOperand,
+        source: (u8, Option<u8>),
     },
     AddImmToAcc {
         dest: AccumulatorReg,
-        source: (u8, u8),
+        source: (u8, Option<u8>),
     },
+    Unsupported,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -117,8 +114,9 @@ use std::fmt;
 
 impl fmt::Display for InstructionSet {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for instr in &self.instructions {
-            writeln!(f, "{instr}")?;
+        for (idx, instr) in &self.instructions {
+            writeln!(f, "{instr} ; {idx:?}")?;
+            // writeln!(f, "{instr}")?;
         }
         Ok(())
     }
@@ -174,19 +172,51 @@ impl fmt::Display for Instruction {
             Instruction::AddRegMemWithReg { dest, source } => {
                 write!(f, "add {dest}, {source}")
             }
-            Instruction::AddImmToReg8 { dest, source } => {
+            Instruction::AddImmToMemory { dest, source } => {
+                let byte_1 = source.0;
+                let source = match source.1 {
+                    Some(byte_2) => {
+                        let val = (u16::from(byte_2) << 8) | u16::from(byte_1);
+                        format!("word {val:}")
+                    }
+                    None => {
+                        format!("byte {byte_1:}")
+                    }
+                };
                 write!(f, "add {dest}, {source:}")
             }
-            Instruction::AddImmToReg16 {
-                dest,
-                source: (low, high),
-            } => {
-                let val = (u16::from(*high) << 8) | u16::from(*low);
-                write!(f, "add {dest}, {val:}")
-            }
             Instruction::AddImmToAcc { dest, source } => {
-                let source = (u16::from(source.1) << 8) | u16::from(source.0);
-                write!(f, "add {dest}, [{source:}]")
+                let byte_1 = source.0;
+                let source = match source.1 {
+                    Some(byte_2) => {
+                        let val = (u16::from(byte_2) << 8) | u16::from(byte_1);
+                        let is_signed = val & 0x8000_u16 != 0;
+                        let disp_str = if is_signed {
+                            // negative number in signed 8-bit
+                            let neg = (!val).wrapping_add(1);
+                            format!("-{neg:}")
+                        } else {
+                            format!("{val:}")
+                        };
+                        format!("{disp_str:}")
+                    }
+                    None => {
+                        let is_signed = byte_1 & 0x80 != 0;
+
+                        let disp_str = if is_signed {
+                            // negative number in signed 8-bit
+                            let neg = (!byte_1).wrapping_add(1);
+                            format!("-{neg:}")
+                        } else {
+                            format!("{byte_1:}")
+                        };
+                        format!("{disp_str:}")
+                    }
+                };
+                write!(f, "add {dest}, {source:}")
+            }
+            Instruction::Unsupported => {
+                write!(f, "; unsupported")
             }
         }
     }
@@ -269,25 +299,45 @@ impl fmt::Display for EffectiveAddr<u8> {
         };
 
         // Display as a signed byte displacement in hex (e.g., +0x12, -0x0A)
-        let disp_str = if disp & 0x80 != 0 {
-            // negative number in signed 8-bit
-            let neg = (!disp).wrapping_add(1);
-            format!("- {neg:}")
-        } else {
-            format!("+ {disp:}")
-        };
+        let is_signed = disp & 0x80 != 0;
+        let disp_str = signed_display(is_signed, disp);
 
         match self {
-            Self::BxPlusSi(_) => write!(f, "[bx + si {disp_str}]"),
-            Self::BxPlusDi(_) => write!(f, "[bx + di {disp_str}]"),
-            Self::BPPlusSi(_) => write!(f, "[bp + si {disp_str}]"),
-            Self::BPPlusDi(_) => write!(f, "[bp + di {disp_str}]"),
-            Self::Si(_) => write!(f, "[si {disp_str}]"),
-            Self::Di(_) => write!(f, "[di {disp_str}]"),
-            Self::Bp(_) => write!(f, "[bp {disp_str}]"),
-            Self::Bx(_) => write!(f, "[bx {disp_str}]"),
+            Self::BxPlusSi(_) => write!(f, "[bx + si{disp_str}]"),
+            Self::BxPlusDi(_) => write!(f, "[bx + di{disp_str}]"),
+            Self::BPPlusSi(_) => write!(f, "[bp + si{disp_str}]"),
+            Self::BPPlusDi(_) => write!(f, "[bp + di{disp_str}]"),
+            Self::Si(_) => write!(f, "[si{disp_str}]"),
+            Self::Di(_) => write!(f, "[di{disp_str}]"),
+            Self::Bp(_) => write!(f, "[bp{disp_str}]"),
+            Self::Bx(_) => write!(f, "[bx{disp_str}]"),
         }
     }
+}
+
+fn signed_display(is_signed: bool, disp: u8) -> String {
+    if disp == 0 {
+        return format!("");
+    }
+    let disp_str = if is_signed {
+        // negative number in signed 8-bit
+        let neg = (!disp).wrapping_add(1);
+        format!(" - {neg:}")
+    } else {
+        format!(" + {disp:}")
+    };
+    disp_str
+}
+
+fn signed_display_u16(is_signed: bool, disp: u16) -> String {
+    let disp_str = if is_signed {
+        // negative number in signed 8-bit
+        let neg = (!disp).wrapping_add(1);
+        format!("- {neg:}")
+    } else {
+        format!("+ {disp:}")
+    };
+    disp_str
 }
 
 impl fmt::Display for EffectiveAddr<(u8, u8)> {
@@ -306,9 +356,13 @@ impl fmt::Display for EffectiveAddr<(u8, u8)> {
         let disp = (u16::from(high) << 8) | u16::from(low);
         // Display two-byte displacement in hex (e.g. +0x1234 or -0x1234)
         let disp_str = if disp & 0x8000 != 0 {
-            // Negative in 16-bit signed
-            let neg = (!disp).wrapping_add(1);
-            format!("- {neg:}")
+            if disp != 0 {
+                // Negative in 16-bit signed
+                let neg = (!disp).wrapping_add(1);
+                format!("- {neg:}")
+            } else {
+                format!("{disp}")
+            }
         } else {
             format!("+ {disp:}")
         };

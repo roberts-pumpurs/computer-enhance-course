@@ -14,11 +14,12 @@ impl InstructionSet {
         let mut byte_iter = bytes.iter().copied().peekable();
 
         let mut ixs = vec![];
+        let mut idx = 1;
         while byte_iter.peek().is_some() {
+            print!("{idx:}: ");
             let ix = Instruction::from_byte(&mut byte_iter);
-            if let Some(ix) = ix {
-                ixs.push(ix);
-            }
+            ixs.push((idx, ix));
+            idx += 1;
         }
 
         Self {
@@ -30,7 +31,7 @@ impl InstructionSet {
 
 impl Instruction {
     #[must_use]
-    pub fn from_byte<I: Iterator<Item = u8>>(mut bytes: I) -> Option<Self> {
+    pub fn from_byte<I: Iterator<Item = u8>>(mut bytes: I) -> Self {
         mod opcodes {
             pub(crate) const MOV_REG_MEM_TO_FROM_REG: u8 = 0b____10001000_u8;
             pub(crate) const MOV_REG_MEM_TO_FROM_REG_MAX: u8 = 0b10001011_u8 + 1;
@@ -78,20 +79,24 @@ impl Instruction {
             // add ixs
             opcodes::ADD_REG_MEM_WITH_REG_TO_EITHER
                 ..opcodes::ADD_REG_MEM_WITH_REG_TO_EITHER_MAX => {
+                print!("mem to mem {first_byte:08b}");
                 decode_add_reg_mem_to_either(&mut bytes, first_byte)
             }
             opcodes::ADD_IMM_TO_REG_OR_MEMORY..opcodes::ADD_IMM_TO_REG_OR_MEMORY_MAX => {
+                print!("imm to reg {first_byte:08b}");
                 decode_add_immediate_to_reg(first_byte, &mut bytes)
             }
             opcodes::ADD_IMM_TO_ACCUMULATOR..opcodes::ADD_IMM_TO_ACCUMULATOR_MAX => {
+                print!("imm to acc {first_byte:08b}");
                 decode_add_imm_to_acc(first_byte, &mut bytes)
             }
             _ => {
-                println!("{first_byte:08b}");
-                return None;
+                print!("??? ?? ??? {first_byte:08b}");
+                Instruction::Unsupported
             }
         };
-        Some(ix)
+        println!(" {ix:?}");
+        ix
     }
 }
 
@@ -102,6 +107,14 @@ fn is_wide(byte: u8) -> bool {
     }
     let wide = byte & masks::WOR;
     wide > 0
+}
+
+fn is_signed(byte: u8) -> bool {
+    mod masks {
+        pub(crate) const SIG: u8 = 0b00000001_u8;
+    }
+    let signed = byte & masks::SIG;
+    signed > 0
 }
 
 #[derive(Debug, FromPrimitive)]
@@ -168,11 +181,20 @@ fn decode_mov_mem_to_acc<I: Iterator<Item = u8>>(first_byte: u8, bytes: &mut I) 
 }
 
 fn decode_add_imm_to_acc<I: Iterator<Item = u8>>(first_byte: u8, bytes: &mut I) -> Instruction {
-    let ix = decode_mov_mem_to_acc(first_byte, bytes);
-    let Instruction::MovMemoryToAccumulator { dest, source } = ix else {
-        unreachable!()
-    };
-    Instruction::AddImmToAcc { dest, source }
+    let wide = is_wide(first_byte);
+    if wide {
+        let data_byte_1 = bytes.next().unwrap();
+        let data_byte_2 = bytes.next().unwrap();
+        return Instruction::AddImmToAcc {
+            dest: AccumulatorReg::Ax,
+            source: (data_byte_1, Some(data_byte_2)),
+        };
+    }
+    let data_byte_1 = bytes.next().unwrap();
+    Instruction::AddImmToAcc {
+        dest: AccumulatorReg::Al,
+        source: (data_byte_1, None),
+    }
 }
 
 fn decode_mov_immediate_to_reg_mem<I: Iterator<Item = u8>>(
@@ -268,13 +290,59 @@ fn decode_add_reg_mem_to_either<I: Iterator<Item = u8>>(
 
 fn decode_add_immediate_to_reg<I: Iterator<Item = u8>>(
     first_byte: u8,
-    bytes: &mut I,
+    mut bytes: &mut I,
 ) -> Instruction {
-    let ix = decode_mov_immediate_to_reg(first_byte, bytes);
-    match ix {
-        Instruction::MovImmToReg8 { dest, source } => Instruction::AddImmToReg8 { dest, source },
-        Instruction::MovImmToReg16 { dest, source } => Instruction::AddImmToReg16 { dest, source },
-        _ => unreachable!(),
+    let is_signed = is_signed(first_byte >> 1);
+    let second_byte = bytes.next().unwrap();
+    let is_wide = is_wide(first_byte);
+    let memory_mode = memory_mode(second_byte >> 6);
+    let rm = reg_rm(second_byte);
+
+    let get_source = |bytes: &mut I| {
+        let immediate_byte_1 = bytes.next().unwrap();
+
+        if is_wide && !is_signed {
+            let immediate_byte_2 = bytes.next().unwrap();
+            return (immediate_byte_1, Some(immediate_byte_2));
+        }
+        (immediate_byte_1, None)
+    };
+
+    match memory_mode {
+        MemoryMode::RegisterMode => {
+            let dest = reg_to_mov_operand(is_wide, rm);
+            let source = get_source(bytes);
+
+            Instruction::AddImmToMemory { dest, source }
+        }
+        MemoryMode::NoDisplacement => {
+            let dest = decode_mod00_rm(rm, &mut bytes);
+            let source = get_source(&mut bytes);
+
+            Instruction::AddImmToMemory { dest, source }
+        }
+        MemoryMode::Bit8Displacement => {
+            let low_disp_byte = bytes.next().unwrap();
+            let rm = decode_mod01_mod02_rm(rm, low_disp_byte);
+            let source = get_source(bytes);
+
+            Instruction::AddImmToMemory {
+                dest: MovOperand::Mod01(rm),
+                source,
+            }
+        }
+        MemoryMode::Bit16Displacement => {
+            let low_disp_byte = bytes.next().unwrap();
+            let high_disp_byte = bytes.next().unwrap();
+
+            let rm = decode_mod01_mod02_rm(rm, (low_disp_byte, high_disp_byte));
+            let source = get_source(bytes);
+
+            Instruction::AddImmToMemory {
+                dest: MovOperand::Mod10(rm),
+                source,
+            }
+        }
     }
 }
 
@@ -435,6 +503,8 @@ mod tests {
             .lines()
             .filter(|x| !x.starts_with(';'))
             .filter(|x| !x.is_empty())
+            .enumerate()
+            .map(|(idx, ix)| format!("{ix} ; {idx:?}"))
             .join("\n");
         let expected_content = sh.read_binary_file(fixture_machine_code_file).unwrap();
 
