@@ -1,3 +1,7 @@
+use std::fmt;
+
+use num_derive::FromPrimitive;
+
 mod binary_parsing;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -32,19 +36,30 @@ pub enum Instruction {
         source: AccumulatorReg,
         dest: (u8, u8),
     },
-    AddRegMemWithReg {
+    ArithmRegMemWithReg {
+        operation: ArithmeticOp,
         dest: MovOperand,
         source: MovOperand,
     },
-    AddImmToMemory {
+    ArithmImmToMemory {
+        operation: ArithmeticOp,
         dest: MovOperand,
         source: (u8, Option<u8>),
     },
-    AddImmToAcc {
+    ArithmImmToAcc {
+        operation: ArithmeticOp,
         dest: AccumulatorReg,
         source: (u8, Option<u8>),
     },
     Unsupported,
+}
+
+#[derive(Debug, FromPrimitive, Clone, PartialEq, Eq, Copy)]
+#[repr(u8)]
+pub enum ArithmeticOp {
+    Add = 0b00000000,
+    Sub = 0b00000101,
+    Cmp = 0b00000111,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -110,7 +125,15 @@ pub enum MovOperand {
     Mod10(EffectiveAddr<(u8, u8)>),
 }
 
-use std::fmt;
+impl fmt::Display for ArithmeticOp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ArithmeticOp::Add => write!(f, "add"),
+            ArithmeticOp::Sub => write!(f, "sub"),
+            ArithmeticOp::Cmp => write!(f, "cmp"),
+        }
+    }
+}
 
 impl fmt::Display for InstructionSet {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -170,10 +193,18 @@ impl fmt::Display for Instruction {
                 let dest = (u16::from(dest.1) << 8) | u16::from(dest.0);
                 write!(f, "mov [{dest}], {source:}")
             }
-            Instruction::AddRegMemWithReg { dest, source } => {
-                write!(f, "add {dest}, {source}")
+            Instruction::ArithmRegMemWithReg {
+                dest,
+                source,
+                operation,
+            } => {
+                write!(f, "{operation} {dest}, {source}")
             }
-            Instruction::AddImmToMemory { dest, source } => {
+            Instruction::ArithmImmToMemory {
+                dest,
+                source,
+                operation,
+            } => {
                 let byte_1 = source.0;
                 let source = match source.1 {
                     Some(byte_2) => {
@@ -184,9 +215,13 @@ impl fmt::Display for Instruction {
                         format!("byte {byte_1:}")
                     }
                 };
-                write!(f, "add {dest}, {source:}")
+                write!(f, "{operation} {dest}, {source:}")
             }
-            Instruction::AddImmToAcc { dest, source } => {
+            Instruction::ArithmImmToAcc {
+                dest,
+                source,
+                operation,
+            } => {
                 let byte_1 = source.0;
                 let source = match source.1 {
                     Some(byte_2) => {
@@ -214,7 +249,7 @@ impl fmt::Display for Instruction {
                         format!("{disp_str:}")
                     }
                 };
-                write!(f, "add {dest}, {source:}")
+                write!(f, "{operation} {dest}, {source:}")
             }
             Instruction::Unsupported => {
                 write!(f, "; unsupported")

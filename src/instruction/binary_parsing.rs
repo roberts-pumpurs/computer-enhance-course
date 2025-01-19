@@ -1,7 +1,7 @@
 use num_derive::FromPrimitive;
 use num_traits::FromPrimitive;
 
-use crate::instruction::{AccumulatorReg, MovOperand};
+use crate::instruction::{AccumulatorReg, ArithmeticOp, MovOperand};
 
 use super::{EffectiveAddr, Instruction, InstructionSet, Mod00EffectiveAddr, Reg16, Reg8};
 
@@ -56,6 +56,18 @@ impl Instruction {
 
             pub(crate) const ADD_IMM_TO_ACCUMULATOR: u8 = 0b____00000100_u8;
             pub(crate) const ADD_IMM_TO_ACCUMULATOR_MAX: u8 = 0b00000101_u8 + 1;
+
+            pub(crate) const SUB_REG_MEM_WITH_REG_TO_EITHER: u8 = 0b____00101000_u8;
+            pub(crate) const SUB_REG_MEM_WITH_REG_TO_EITHER_MAX: u8 = 0b00101011_u8 + 1;
+
+            pub(crate) const SUB_IMM_TO_ACCUMULATOR: u8 = 0b____00101100_u8;
+            pub(crate) const SUB_IMM_TO_ACCUMULATOR_MAX: u8 = 0b00101101_u8 + 1;
+
+            pub(crate) const CMP_REG_MEM_WITH_REG_TO_EITHER: u8 = 0b____00111000_u8;
+            pub(crate) const CMP_REG_MEM_WITH_REG_TO_EITHER_MAX: u8 = 0b00111011_u8 + 1;
+
+            pub(crate) const CMP_IMM_TO_ACCUMULATOR: u8 = 0b____00111100_u8;
+            pub(crate) const CMP_IMM_TO_ACCUMULATOR_MAX: u8 = 0b00111101_u8 + 1;
         }
 
         let first_byte = bytes.next().unwrap();
@@ -76,19 +88,40 @@ impl Instruction {
             opcodes::MOV_ACCUMULATOR_TO_MEMORY..opcodes::MOV_ACCUMULATOR_TO_MEMORY_MAX => {
                 decode_mov_acc_to_mem(first_byte, bytes)
             }
-            // add ixs
-            opcodes::ADD_REG_MEM_WITH_REG_TO_EITHER
-                ..opcodes::ADD_REG_MEM_WITH_REG_TO_EITHER_MAX => {
-                print!("mem to mem {first_byte:08b}");
-                decode_add_reg_mem_to_either(&mut bytes, first_byte)
-            }
+            // add, sub, cmp ixs
             opcodes::ADD_IMM_TO_REG_OR_MEMORY..opcodes::ADD_IMM_TO_REG_OR_MEMORY_MAX => {
                 print!("imm to reg {first_byte:08b}");
                 decode_add_immediate_to_reg(first_byte, &mut bytes)
             }
+            // add only
+            opcodes::ADD_REG_MEM_WITH_REG_TO_EITHER
+                ..opcodes::ADD_REG_MEM_WITH_REG_TO_EITHER_MAX => {
+                print!("mem to mem {first_byte:08b}");
+                decode_add_reg_mem_to_either(&mut bytes, first_byte, ArithmeticOp::Add)
+            }
             opcodes::ADD_IMM_TO_ACCUMULATOR..opcodes::ADD_IMM_TO_ACCUMULATOR_MAX => {
                 print!("imm to acc {first_byte:08b}");
-                decode_add_imm_to_acc(first_byte, &mut bytes)
+                decode_add_imm_to_acc(first_byte, &mut bytes, ArithmeticOp::Add)
+            }
+            // sub only
+            opcodes::SUB_REG_MEM_WITH_REG_TO_EITHER
+                ..opcodes::SUB_REG_MEM_WITH_REG_TO_EITHER_MAX => {
+                print!("mem to mem {first_byte:08b}");
+                decode_add_reg_mem_to_either(&mut bytes, first_byte, ArithmeticOp::Sub)
+            }
+            opcodes::SUB_IMM_TO_ACCUMULATOR..opcodes::SUB_IMM_TO_ACCUMULATOR_MAX => {
+                print!("imm to acc {first_byte:08b}");
+                decode_add_imm_to_acc(first_byte, &mut bytes, ArithmeticOp::Sub)
+            }
+            // cmp only
+            opcodes::CMP_REG_MEM_WITH_REG_TO_EITHER
+                ..opcodes::CMP_REG_MEM_WITH_REG_TO_EITHER_MAX => {
+                print!("mem to mem {first_byte:08b}");
+                decode_add_reg_mem_to_either(&mut bytes, first_byte, ArithmeticOp::Cmp)
+            }
+            opcodes::CMP_IMM_TO_ACCUMULATOR..opcodes::CMP_IMM_TO_ACCUMULATOR_MAX => {
+                print!("imm to acc {first_byte:08b}");
+                decode_add_imm_to_acc(first_byte, &mut bytes, ArithmeticOp::Cmp)
             }
             _ => {
                 print!("??? ?? ??? {first_byte:08b}");
@@ -130,6 +163,12 @@ fn memory_mode(byte: u8) -> MemoryMode {
     pub(crate) const MOD: u8 = 0b00000011u8;
     let byte = byte & MOD;
     MemoryMode::from_u8(byte).unwrap()
+}
+
+fn arithmetic_type(byte: u8) -> ArithmeticOp {
+    pub(crate) const PATTERN: u8 = 0b00000111u8;
+    let byte = byte & PATTERN;
+    ArithmeticOp::from_u8(byte).unwrap()
 }
 
 fn reg_rm(byte: u8) -> u8 {
@@ -180,18 +219,24 @@ fn decode_mov_mem_to_acc<I: Iterator<Item = u8>>(first_byte: u8, bytes: &mut I) 
     }
 }
 
-fn decode_add_imm_to_acc<I: Iterator<Item = u8>>(first_byte: u8, bytes: &mut I) -> Instruction {
+fn decode_add_imm_to_acc<I: Iterator<Item = u8>>(
+    first_byte: u8,
+    bytes: &mut I,
+    operation: ArithmeticOp,
+) -> Instruction {
     let wide = is_wide(first_byte);
     if wide {
         let data_byte_1 = bytes.next().unwrap();
         let data_byte_2 = bytes.next().unwrap();
-        return Instruction::AddImmToAcc {
+        return Instruction::ArithmImmToAcc {
+            operation,
             dest: AccumulatorReg::Ax,
             source: (data_byte_1, Some(data_byte_2)),
         };
     }
     let data_byte_1 = bytes.next().unwrap();
-    Instruction::AddImmToAcc {
+    Instruction::ArithmImmToAcc {
+        operation,
         dest: AccumulatorReg::Al,
         source: (data_byte_1, None),
     }
@@ -280,12 +325,17 @@ fn decode_mov_immediate_to_reg<I: Iterator<Item = u8>>(
 fn decode_add_reg_mem_to_either<I: Iterator<Item = u8>>(
     bytes: &mut I,
     first_byte: u8,
+    operation: ArithmeticOp,
 ) -> Instruction {
     let ix = decode_mov_reg_mem_to_from_reg(bytes, first_byte);
     let Instruction::MovRegMemWithRegToEither { dest, source } = ix else {
         unreachable!()
     };
-    Instruction::AddRegMemWithReg { dest, source }
+    Instruction::ArithmRegMemWithReg {
+        dest,
+        source,
+        operation,
+    }
 }
 
 fn decode_add_immediate_to_reg<I: Iterator<Item = u8>>(
@@ -297,6 +347,8 @@ fn decode_add_immediate_to_reg<I: Iterator<Item = u8>>(
     let is_wide = is_wide(first_byte);
     let memory_mode = memory_mode(second_byte >> 6);
     let rm = reg_rm(second_byte);
+
+    let operation = arithmetic_type(second_byte >> 3);
 
     let get_source = |bytes: &mut I| {
         let immediate_byte_1 = bytes.next().unwrap();
@@ -313,22 +365,31 @@ fn decode_add_immediate_to_reg<I: Iterator<Item = u8>>(
             let dest = reg_to_mov_operand(is_wide, rm);
             let source = get_source(bytes);
 
-            Instruction::AddImmToMemory { dest, source }
+            Instruction::ArithmImmToMemory {
+                dest,
+                source,
+                operation,
+            }
         }
         MemoryMode::NoDisplacement => {
             let dest = decode_mod00_rm(rm, &mut bytes);
             let source = get_source(&mut bytes);
 
-            Instruction::AddImmToMemory { dest, source }
+            Instruction::ArithmImmToMemory {
+                dest,
+                source,
+                operation,
+            }
         }
         MemoryMode::Bit8Displacement => {
             let low_disp_byte = bytes.next().unwrap();
             let rm = decode_mod01_mod02_rm(rm, low_disp_byte);
             let source = get_source(bytes);
 
-            Instruction::AddImmToMemory {
+            Instruction::ArithmImmToMemory {
                 dest: MovOperand::Mod01(rm),
                 source,
+                operation,
             }
         }
         MemoryMode::Bit16Displacement => {
@@ -338,9 +399,10 @@ fn decode_add_immediate_to_reg<I: Iterator<Item = u8>>(
             let rm = decode_mod01_mod02_rm(rm, (low_disp_byte, high_disp_byte));
             let source = get_source(bytes);
 
-            Instruction::AddImmToMemory {
+            Instruction::ArithmImmToMemory {
                 dest: MovOperand::Mod10(rm),
                 source,
+                operation,
             }
         }
     }
