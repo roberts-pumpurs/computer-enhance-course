@@ -51,7 +51,49 @@ pub enum Instruction {
         dest: AccumulatorReg,
         source: (u8, Option<u8>),
     },
+    JumpOnNotEqual {
+        instruction_pointer_increment: u8,
+    },
+    JumpOnEqualZero {
+        instruction_pointer_increment: u8,
+    },
     Unsupported,
+    JumpOnLess {
+        instruction_pointer_increment: u8,
+    },
+    JumpOnBelow {
+        instruction_pointer_increment: u8,
+    },
+    JumpOnBelowOrEqual {
+        instruction_pointer_increment: u8,
+    },
+    JumpOnParity {
+        instruction_pointer_increment: u8,
+    },
+    JumpOnOverflow {
+        instruction_pointer_increment: u8,
+    },
+    JumpOnSign {
+        instruction_pointer_increment: u8,
+    },
+    JumpOnGreaterOrEqual {
+        instruction_pointer_increment: u8,
+    },
+    JumpOnGreater {
+        instruction_pointer_increment: u8,
+    },
+    JumpOnAboveOrEqual {
+        instruction_pointer_increment: u8,
+    },
+    JumpOnOdd {
+        instruction_pointer_increment: u8,
+    },
+    JumpOnNotOverflow {
+        instruction_pointer_increment: u8,
+    },
+    JumpOnNotSign {
+        instruction_pointer_increment: u8,
+    },
 }
 
 #[derive(Debug, FromPrimitive, Clone, PartialEq, Eq, Copy)]
@@ -159,20 +201,20 @@ impl fmt::Display for AccumulatorReg {
 impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::MovRegMemWithRegToEither { dest, source } => {
+            Instruction::MovRegMemWithRegToEither { dest, source } => {
                 write!(f, "mov {dest}, {source}")
             }
-            Self::MovImmToReg8 { dest, source } => {
+            Instruction::MovImmToReg8 { dest, source } => {
                 write!(f, "mov {dest}, {source:}")
             }
-            Self::MovImmToReg16 {
+            Instruction::MovImmToReg16 {
                 dest,
                 source: (low, high),
             } => {
                 let val = (u16::from(*high) << 8) | u16::from(*low);
                 write!(f, "mov {dest}, {val:}")
             }
-            Self::MovImmToMemory { dest, source } => {
+            Instruction::MovImmToMemory { dest, source } => {
                 let byte_1 = source.0;
                 let source = match source.1 {
                     Some(byte_2) => {
@@ -185,11 +227,11 @@ impl fmt::Display for Instruction {
                 };
                 write!(f, "mov {dest}, {source:}")
             }
-            Self::MovMemoryToAccumulator { dest, source } => {
+            Instruction::MovMemoryToAccumulator { dest, source } => {
                 let source = (u16::from(source.1) << 8) | u16::from(source.0);
                 write!(f, "mov {dest}, [{source:}]")
             }
-            Self::MovAccumulatorToMemory { dest, source } => {
+            Instruction::MovAccumulatorToMemory { dest, source } => {
                 let dest = (u16::from(dest.1) << 8) | u16::from(dest.0);
                 write!(f, "mov [{dest}], {source:}")
             }
@@ -253,6 +295,76 @@ impl fmt::Display for Instruction {
             }
             Instruction::Unsupported => {
                 write!(f, "; unsupported")
+            }
+            Instruction::JumpOnNotEqual {
+                instruction_pointer_increment,
+            } => {
+                write!(f, "jnz {instruction_pointer_increment:}")
+            }
+            Instruction::JumpOnEqualZero {
+                instruction_pointer_increment,
+            } => {
+                write!(f, "je {instruction_pointer_increment:}")
+            }
+            Instruction::JumpOnLess {
+                instruction_pointer_increment,
+            } => {
+                write!(f, "jl {instruction_pointer_increment:}")
+            }
+            Instruction::JumpOnBelow {
+                instruction_pointer_increment,
+            } => {
+                write!(f, "jb {instruction_pointer_increment:}")
+            }
+            Instruction::JumpOnBelowOrEqual {
+                instruction_pointer_increment,
+            } => {
+                write!(f, "jbe {instruction_pointer_increment:}")
+            }
+            Instruction::JumpOnParity {
+                instruction_pointer_increment,
+            } => {
+                write!(f, "jp {instruction_pointer_increment:}")
+            }
+            Instruction::JumpOnOverflow {
+                instruction_pointer_increment,
+            } => {
+                write!(f, "jo {instruction_pointer_increment:}")
+            }
+            Instruction::JumpOnSign {
+                instruction_pointer_increment,
+            } => {
+                write!(f, "js {instruction_pointer_increment:}")
+            }
+            Instruction::JumpOnGreaterOrEqual {
+                instruction_pointer_increment,
+            } => {
+                write!(f, "jnl {instruction_pointer_increment:}")
+            }
+            Instruction::JumpOnGreater {
+                instruction_pointer_increment,
+            } => {
+                write!(f, "jg {instruction_pointer_increment:}")
+            }
+            Instruction::JumpOnAboveOrEqual {
+                instruction_pointer_increment,
+            } => {
+                write!(f, "jnb {instruction_pointer_increment:}")
+            }
+            Instruction::JumpOnOdd {
+                instruction_pointer_increment,
+            } => {
+                write!(f, "jnp {instruction_pointer_increment:}")
+            }
+            Instruction::JumpOnNotOverflow {
+                instruction_pointer_increment,
+            } => {
+                write!(f, "jno {instruction_pointer_increment:}")
+            }
+            Instruction::JumpOnNotSign {
+                instruction_pointer_increment,
+            } => {
+                write!(f, "jns {instruction_pointer_increment:}")
             }
         }
     }

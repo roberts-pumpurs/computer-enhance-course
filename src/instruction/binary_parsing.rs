@@ -68,6 +68,30 @@ impl Instruction {
 
             pub(crate) const CMP_IMM_TO_ACCUMULATOR: u8 = 0b____00111100_u8;
             pub(crate) const CMP_IMM_TO_ACCUMULATOR_MAX: u8 = 0b00111101_u8 + 1;
+
+            pub(crate) const JNZ: u8 = 0b01110101;
+            pub(crate) const JE: u8 = 0b01110100;
+            pub(crate) const JL: u8 = 0b01111100;
+            pub(crate) const JB: u8 = 0b01110010;
+
+            pub(crate) const JBE: u8 = 0b01110110;
+            pub(crate) const JP: u8 = 0b_01111010;
+            pub(crate) const JO: u8 = 0b_01110000;
+            pub(crate) const JS: u8 = 0b_01111000;
+
+            pub(crate) const JNL: u8 = 0b01111101;
+            pub(crate) const JG: u8 = 0b_01111111;
+            pub(crate) const JNB: u8 = 0b01110011;
+
+            pub(crate) const JNP: u8 = 0b01111011;
+            pub(crate) const JNO: u8 = 0b01110001;
+            pub(crate) const JNS: u8 = 0b01111001;
+            //
+            // todo
+            // loop label
+            // loopz label
+            // loopnz label
+            // jcxz labe
         }
 
         let first_byte = bytes.next().unwrap();
@@ -122,6 +146,104 @@ impl Instruction {
             opcodes::CMP_IMM_TO_ACCUMULATOR..opcodes::CMP_IMM_TO_ACCUMULATOR_MAX => {
                 print!("imm to acc {first_byte:08b}");
                 decode_add_imm_to_acc(first_byte, &mut bytes, ArithmeticOp::Cmp)
+            }
+            opcodes::JNZ => {
+                let second = bytes.next().unwrap();
+                print!("jnz {first_byte:08b}");
+                Instruction::JumpOnNotEqual {
+                    instruction_pointer_increment: second,
+                }
+            }
+            opcodes::JE => {
+                let second = bytes.next().unwrap();
+                print!("je {first_byte:08b}");
+                Instruction::JumpOnEqualZero {
+                    instruction_pointer_increment: second,
+                }
+            }
+            opcodes::JL => {
+                let second = bytes.next().unwrap();
+                print!("jl {first_byte:08b}");
+                Instruction::JumpOnLess {
+                    instruction_pointer_increment: second,
+                }
+            }
+            opcodes::JB => {
+                let second = bytes.next().unwrap();
+                print!("jb {first_byte:08b}");
+                Instruction::JumpOnBelow {
+                    instruction_pointer_increment: second,
+                }
+            }
+            opcodes::JBE => {
+                let second = bytes.next().unwrap();
+                print!("jbe {first_byte:08b}");
+                Instruction::JumpOnBelowOrEqual {
+                    instruction_pointer_increment: second,
+                }
+            }
+            opcodes::JP => {
+                let second = bytes.next().unwrap();
+                print!("jp {first_byte:08b}");
+                Instruction::JumpOnParity {
+                    instruction_pointer_increment: second,
+                }
+            }
+            opcodes::JO => {
+                let second = bytes.next().unwrap();
+                print!("jo {first_byte:08b}");
+                Instruction::JumpOnOverflow {
+                    instruction_pointer_increment: second,
+                }
+            }
+            opcodes::JS => {
+                let second = bytes.next().unwrap();
+                print!("js {first_byte:08b}");
+                Instruction::JumpOnSign {
+                    instruction_pointer_increment: second,
+                }
+            }
+            opcodes::JNL => {
+                let second = bytes.next().unwrap();
+                print!("jnl {first_byte:08b}");
+                Instruction::JumpOnGreaterOrEqual {
+                    instruction_pointer_increment: second,
+                }
+            }
+            opcodes::JG => {
+                let second = bytes.next().unwrap();
+                print!("jg {first_byte:08b}");
+                Instruction::JumpOnGreater {
+                    instruction_pointer_increment: second,
+                }
+            }
+            opcodes::JNB => {
+                let second = bytes.next().unwrap();
+                print!("jnb {first_byte:08b}");
+                Instruction::JumpOnAboveOrEqual {
+                    instruction_pointer_increment: second,
+                }
+            }
+            opcodes::JNP => {
+                let second = bytes.next().unwrap();
+                print!("jnp {first_byte:08b}");
+                Instruction::JumpOnOdd {
+                    instruction_pointer_increment: second,
+                }
+            }
+            opcodes::JNO => {
+                let second = bytes.next().unwrap();
+                print!("jno {first_byte:08b}");
+                Instruction::JumpOnNotOverflow {
+                    instruction_pointer_increment: second,
+                }
+            }
+            opcodes::JNS => {
+                let second = bytes.next().unwrap();
+                print!("jns {first_byte:08b}");
+                Instruction::JumpOnNotSign {
+                    instruction_pointer_increment: second,
+                }
             }
             _ => {
                 print!("??? ?? ??? {first_byte:08b}");
