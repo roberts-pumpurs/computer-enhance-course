@@ -51,47 +51,65 @@ pub enum Instruction {
         dest: AccumulatorReg,
         source: (u8, Option<u8>),
     },
-    JumpOnNotEqual {
+    Jnz {
         instruction_pointer_increment: u8,
     },
-    JumpOnEqualZero {
+    Je {
         instruction_pointer_increment: u8,
     },
     Unsupported,
-    JumpOnLess {
+    Jle {
         instruction_pointer_increment: u8,
     },
-    JumpOnBelow {
+    Jb {
         instruction_pointer_increment: u8,
     },
-    JumpOnBelowOrEqual {
+    Jbe {
         instruction_pointer_increment: u8,
     },
-    JumpOnParity {
+    Jp {
         instruction_pointer_increment: u8,
     },
-    JumpOnOverflow {
+    Jo {
         instruction_pointer_increment: u8,
     },
-    JumpOnSign {
+    Js {
         instruction_pointer_increment: u8,
     },
-    JumpOnGreaterOrEqual {
+    Jnl {
         instruction_pointer_increment: u8,
     },
-    JumpOnGreater {
+    Jg {
         instruction_pointer_increment: u8,
     },
-    JumpOnAboveOrEqual {
+    Jnb {
         instruction_pointer_increment: u8,
     },
-    JumpOnOdd {
+    Jnp {
         instruction_pointer_increment: u8,
     },
-    JumpOnNotOverflow {
+    Jno {
         instruction_pointer_increment: u8,
     },
-    JumpOnNotSign {
+    Jns {
+        instruction_pointer_increment: u8,
+    },
+    LoopTimes {
+        instruction_pointer_increment: u8,
+    },
+    LoopWhileEqual {
+        instruction_pointer_increment: u8,
+    },
+    LoopWhileNotEqual {
+        instruction_pointer_increment: u8,
+    },
+    JumpOnCxZero {
+        instruction_pointer_increment: u8,
+    },
+    Jl {
+        instruction_pointer_increment: u8,
+    },
+    Ja {
         instruction_pointer_increment: u8,
     },
 }
@@ -248,13 +266,39 @@ impl fmt::Display for Instruction {
                 operation,
             } => {
                 let byte_1 = source.0;
+                let dest = match &dest {
+                    MovOperand::Reg8(reg8) => format!("{dest}"),
+                    MovOperand::Reg16(reg16) => format!("{dest}"),
+                    MovOperand::Mod00(mod00_effective_addr) => match mod00_effective_addr {
+                        Mod00EffectiveAddr::BxPlusSi => format!("word {dest}"),
+                        Mod00EffectiveAddr::BxPlusDi => format!("word {dest}"),
+                        Mod00EffectiveAddr::BPPlusSi => format!("word {dest}"),
+                        Mod00EffectiveAddr::BPPlusDi => format!("word {dest}"),
+                        Mod00EffectiveAddr::Si => format!("word {dest}"),
+                        Mod00EffectiveAddr::Di => format!("word {dest}"),
+                        Mod00EffectiveAddr::DirectAddr(_) => format!("word {dest}"),
+                        Mod00EffectiveAddr::Bx => format!("byte {dest}"),
+                    },
+                    MovOperand::Mod01(effective_addr) => {
+                        format!("{dest}")
+                    }
+                    MovOperand::Mod10(effective_addr) => {
+                        format!("word {dest}")
+                    }
+                };
+                // let dest = if source.1.is_some() {
+                //     format!("word {dest}")
+                // } else {
+                //     format!("byte {dest}")
+                // };
+
                 let source = match source.1 {
                     Some(byte_2) => {
                         let val = (u16::from(byte_2) << 8) | u16::from(byte_1);
-                        format!("word {val:}")
+                        format!("{val:}")
                     }
                     None => {
-                        format!("byte {byte_1:}")
+                        format!("{byte_1:}")
                     }
                 };
                 write!(f, "{operation} {dest}, {source:}")
@@ -296,76 +340,94 @@ impl fmt::Display for Instruction {
             Instruction::Unsupported => {
                 write!(f, "; unsupported")
             }
-            Instruction::JumpOnNotEqual {
+            Instruction::Jnz {
                 instruction_pointer_increment,
             } => {
                 write!(f, "jnz {instruction_pointer_increment:}")
             }
-            Instruction::JumpOnEqualZero {
+            Instruction::Je {
                 instruction_pointer_increment,
             } => {
                 write!(f, "je {instruction_pointer_increment:}")
             }
-            Instruction::JumpOnLess {
+            Instruction::Jle {
                 instruction_pointer_increment,
             } => {
-                write!(f, "jl {instruction_pointer_increment:}")
+                write!(f, "jle {instruction_pointer_increment:}")
             }
-            Instruction::JumpOnBelow {
+            Instruction::Jb {
                 instruction_pointer_increment,
             } => {
                 write!(f, "jb {instruction_pointer_increment:}")
             }
-            Instruction::JumpOnBelowOrEqual {
+            Instruction::Jbe {
                 instruction_pointer_increment,
             } => {
                 write!(f, "jbe {instruction_pointer_increment:}")
             }
-            Instruction::JumpOnParity {
+            Instruction::Jp {
                 instruction_pointer_increment,
             } => {
                 write!(f, "jp {instruction_pointer_increment:}")
             }
-            Instruction::JumpOnOverflow {
+            Instruction::Jo {
                 instruction_pointer_increment,
             } => {
                 write!(f, "jo {instruction_pointer_increment:}")
             }
-            Instruction::JumpOnSign {
+            Instruction::Js {
                 instruction_pointer_increment,
             } => {
                 write!(f, "js {instruction_pointer_increment:}")
             }
-            Instruction::JumpOnGreaterOrEqual {
+            Instruction::Jnl {
                 instruction_pointer_increment,
             } => {
                 write!(f, "jnl {instruction_pointer_increment:}")
             }
-            Instruction::JumpOnGreater {
+            Instruction::Jg {
                 instruction_pointer_increment,
             } => {
                 write!(f, "jg {instruction_pointer_increment:}")
             }
-            Instruction::JumpOnAboveOrEqual {
+            Instruction::Jnb {
                 instruction_pointer_increment,
             } => {
                 write!(f, "jnb {instruction_pointer_increment:}")
             }
-            Instruction::JumpOnOdd {
+            Instruction::Jnp {
                 instruction_pointer_increment,
             } => {
                 write!(f, "jnp {instruction_pointer_increment:}")
             }
-            Instruction::JumpOnNotOverflow {
+            Instruction::Jno {
                 instruction_pointer_increment,
             } => {
                 write!(f, "jno {instruction_pointer_increment:}")
             }
-            Instruction::JumpOnNotSign {
+            Instruction::Jns {
                 instruction_pointer_increment,
             } => {
                 write!(f, "jns {instruction_pointer_increment:}")
             }
+            Instruction::LoopTimes {
+                instruction_pointer_increment,
+            } => write!(f, "loop {instruction_pointer_increment:}"),
+            Instruction::LoopWhileEqual {
+                instruction_pointer_increment,
+            } => write!(f, "loopz {instruction_pointer_increment:}"),
+            Instruction::LoopWhileNotEqual {
+                instruction_pointer_increment,
+            } => write!(f, "loopnz {instruction_pointer_increment:}"),
+            Instruction::JumpOnCxZero {
+                instruction_pointer_increment,
+            } => write!(f, "jcxz {instruction_pointer_increment:}"),
+            Instruction::Jl {
+                instruction_pointer_increment,
+            } => write!(f, "jl {instruction_pointer_increment:}"),
+            Instruction::Ja {
+                instruction_pointer_increment,
+            } => write!(f, "ja {instruction_pointer_increment:}"),
         }
     }
 }
@@ -507,23 +569,29 @@ impl fmt::Display for EffectiveAddr<(u8, u8)> {
             if disp != 0 {
                 // Negative in 16-bit signed
                 let neg = (!disp).wrapping_add(1);
-                format!("- {neg:}")
+                format!(" - {neg:}")
+            } else if disp == 0 {
+                format!("")
             } else {
-                format!("{disp}")
+                format!(" {disp}")
             }
         } else {
-            format!("+ {disp:}")
+            if disp == 0 {
+                format!("")
+            } else {
+                format!(" + {disp:}")
+            }
         };
 
         match self {
-            Self::BxPlusSi(_) => write!(f, "[bx + si {disp_str}]"),
-            Self::BxPlusDi(_) => write!(f, "[bx + di {disp_str}]"),
-            Self::BPPlusSi(_) => write!(f, "[bp + si {disp_str}]"),
-            Self::BPPlusDi(_) => write!(f, "[bp + di {disp_str}]"),
-            Self::Si(_) => write!(f, "[si {disp_str}]"),
-            Self::Di(_) => write!(f, "[di {disp_str}]"),
-            Self::Bp(_) => write!(f, "[bp {disp_str}]"),
-            Self::Bx(_) => write!(f, "[bx {disp_str}]"),
+            Self::BxPlusSi(_) => write!(f, "[bx + si{disp_str}]"),
+            Self::BxPlusDi(_) => write!(f, "[bx + di{disp_str}]"),
+            Self::BPPlusSi(_) => write!(f, "[bp + si{disp_str}]"),
+            Self::BPPlusDi(_) => write!(f, "[bp + di{disp_str}]"),
+            Self::Si(_) => write!(f, "[si{disp_str}]"),
+            Self::Di(_) => write!(f, "[di{disp_str}]"),
+            Self::Bp(_) => write!(f, "[bp{disp_str}]"),
+            Self::Bx(_) => write!(f, "[bx{disp_str}]"),
         }
     }
 }
