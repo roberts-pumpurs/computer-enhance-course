@@ -6,7 +6,8 @@ mod binary_parsing;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct InstructionSet {
-    pub instructions: Vec<(usize, Instruction)>,
+    // idx, instr size in bytes, instr
+    pub instructions: Vec<(usize, usize, Instruction)>,
     pub bits: u8,
 }
 
@@ -123,33 +124,47 @@ pub enum ArithmeticOp {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
 pub enum AccumulatorReg {
-    Ax,
-    Al,
+    Ax = 0,
+    Al = 1,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
 pub enum Reg16 {
-    AX,
-    CX,
-    DX,
-    BX,
-    SP,
-    BP,
-    SI,
-    DI,
+    AX = 0,
+    BX = 1,
+    CX = 2,
+    DX = 3,
+    // stack pointer
+    SP = 4,
+    // base pointer
+    BP = 5,
+    // source index
+    SI = 6,
+    // destination index
+    DI = 7,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u8)]
 pub enum Reg8 {
-    AL,
-    CL,
-    DL,
+    // a reg
+    AL = 0,
+    AH = 1,
+
+    // b reg
     BL,
-    AH,
-    CH,
-    DH,
     BH,
+
+    // c reg
+    CL,
+    CH,
+
+    // d reg
+    DL,
+    DH,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -198,7 +213,7 @@ impl fmt::Display for ArithmeticOp {
 impl fmt::Display for InstructionSet {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "bits 16")?;
-        for (idx, instr) in &self.instructions {
+        for (idx, _size, instr) in &self.instructions {
             writeln!(f, "{instr} ; {idx:?}")?;
             // writeln!(f, "{instr}")?;
         }
@@ -267,8 +282,8 @@ impl fmt::Display for Instruction {
             } => {
                 let byte_1 = source.0;
                 let dest = match &dest {
-                    MovOperand::Reg8(reg8) => format!("{dest}"),
-                    MovOperand::Reg16(reg16) => format!("{dest}"),
+                    MovOperand::Reg8(_reg8) => format!("{dest}"),
+                    MovOperand::Reg16(_reg16) => format!("{dest}"),
                     MovOperand::Mod00(mod00_effective_addr) => match mod00_effective_addr {
                         Mod00EffectiveAddr::BxPlusSi => format!("word {dest}"),
                         Mod00EffectiveAddr::BxPlusDi => format!("word {dest}"),
@@ -279,19 +294,13 @@ impl fmt::Display for Instruction {
                         Mod00EffectiveAddr::DirectAddr(_) => format!("word {dest}"),
                         Mod00EffectiveAddr::Bx => format!("byte {dest}"),
                     },
-                    MovOperand::Mod01(effective_addr) => {
+                    MovOperand::Mod01(_effective_addr) => {
                         format!("{dest}")
                     }
-                    MovOperand::Mod10(effective_addr) => {
+                    MovOperand::Mod10(_effective_addr) => {
                         format!("word {dest}")
                     }
                 };
-                // let dest = if source.1.is_some() {
-                //     format!("word {dest}")
-                // } else {
-                //     format!("byte {dest}")
-                // };
-
                 let source = match source.1 {
                     Some(byte_2) => {
                         let val = (u16::from(byte_2) << 8) | u16::from(byte_1);

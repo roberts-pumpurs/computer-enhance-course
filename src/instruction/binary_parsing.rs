@@ -17,8 +17,11 @@ impl InstructionSet {
         let mut idx = 1;
         while byte_iter.peek().is_some() {
             print!("{idx:}: ");
+            let start_len = byte_iter.len();
             let ix = Instruction::from_byte(&mut byte_iter);
-            ixs.push((idx, ix));
+            let final_len = byte_iter.len();
+            let instr_size = start_len - final_len;
+            ixs.push((idx, instr_size, ix));
             idx += 1;
         }
 
