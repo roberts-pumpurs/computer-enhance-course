@@ -74,6 +74,7 @@ itertools = "0.13"
 num-traits = "0.2"
 num-derive = "0.4"
 bytemuck = "1"
+bitvec = "1"
 
 [dev-dependencies]
 xshell.workspace = true
