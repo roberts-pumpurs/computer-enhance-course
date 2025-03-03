@@ -1,5 +1,6 @@
 use bitvec::prelude::*;
 
+#[derive(Debug)]
 pub struct Instruction {
     size: u8,
     operation: &'static str,
@@ -8,6 +9,7 @@ pub struct Instruction {
 }
 
 #[repr(u8)]
+#[derive(Debug)]
 pub enum RegisterIndex {
     // 8-bit
     AL,
@@ -29,40 +31,199 @@ pub enum RegisterIndex {
     DI,
 }
 
+/// An operand can be one of several kinds.
+#[derive(Debug)]
 enum Operand {
     None,
-    Address(EffectiveAddressExpansion),
-    Register(RegisterAccess),
+    Address(EffectiveAddress),
+    Register(RegisterIndex),
     Immediate(Immediate),
 }
 
+/// Immediate values may be 8 or 16 bits.
+#[derive(Debug)]
+pub enum Immediate {
+    Byte(u8),
+    Word(u16),
+}
+
+/// For memory operands, we support both direct addressing and register indirect addressing with optional displacement.
+#[derive(Debug)]
+pub enum EffectiveAddress {
+    /// When mod == 0 and rm == 6, the operand is a 16-bit direct address.
+    Direct(u16),
+    /// For other cases, we record the base registers plus an optional displacement.
+    Indirect {
+        base: EffectiveAddressBase,
+        disp: Option<i16>,
+    },
+}
+
+/// The possible base register combinations used in 8086 effective address computation.
+#[derive(Debug)]
+pub enum EffectiveAddressBase {
+    BX_SI,
+    BX_DI,
+    BP_SI,
+    BP_DI,
+    SI,
+    DI,
+    BP,
+    BX,
+}
+
+// Map (reg_bits,w) -> a unique register index, in a 0..7 space for 8-bit or 16-bit.
+fn decode_8086_register_index(reg_bits: u8, w: bool) -> RegisterIndex {
+    match (w, reg_bits) {
+        (false, 0b000) => RegisterIndex::AL,
+        (false, 0b001) => RegisterIndex::CL,
+        (false, 0b010) => RegisterIndex::DL,
+        (false, 0b011) => RegisterIndex::BL,
+        (false, 0b100) => RegisterIndex::AH,
+        (false, 0b101) => RegisterIndex::CH,
+        (false, 0b110) => RegisterIndex::DH,
+        (false, 0b111) => RegisterIndex::BH,
+        (true, 0b000) => RegisterIndex::AX,
+        (true, 0b001) => RegisterIndex::CX,
+        (true, 0b010) => RegisterIndex::DX,
+        (true, 0b011) => RegisterIndex::BX,
+        (true, 0b100) => RegisterIndex::SP,
+        (true, 0b101) => RegisterIndex::BP,
+        (true, 0b110) => RegisterIndex::SI,
+        (true, 0b111) => RegisterIndex::DI,
+        _ => panic!("unknown register"),
+    }
+}
+
+/// Decode the rm operand based on mod and rm values. When mod == 3 the operand is a register;
+/// otherwise it is a memory operand. This function also reads any displacement bytes from `bytes`.
+fn decode_rm_operand(mod_val: u8, rm_val: u8, w: bool, bytes: &[u8]) -> Option<(Operand, usize)> {
+    match mod_val {
+        0b11 => {
+            let reg = decode_8086_register_index(rm_val, w);
+            Some((Operand::Register(reg), 0))
+        }
+        0b00 => {
+            if rm_val == 0b110 {
+                // Direct addressing: need a 16-bit address.
+                if bytes.len() < 2 {
+                    panic!("not enough data bytes for direct addressing");
+                }
+                let addr = u16::from_le_bytes([bytes[0], bytes[1]]);
+                Some((Operand::Address(EffectiveAddress::Direct(addr)), 2))
+            } else {
+                let base = match rm_val {
+                    0b000 => EffectiveAddressBase::BX_SI,
+                    0b001 => EffectiveAddressBase::BX_DI,
+                    0b010 => EffectiveAddressBase::BP_SI,
+                    0b011 => EffectiveAddressBase::BP_DI,
+                    0b100 => EffectiveAddressBase::SI,
+                    0b101 => EffectiveAddressBase::DI,
+                    0b111 => EffectiveAddressBase::BX,
+                    _ => panic!("invalid rm value"),
+                };
+                Some((
+                    Operand::Address(EffectiveAddress::Indirect { base, disp: None }),
+                    0,
+                ))
+            }
+        }
+        0b01 => {
+            // 8-bit displacement follows.
+            if bytes.len() < 1 {
+                return None;
+            }
+            let disp = bytes[0] as i8 as i16;
+            let base = match rm_val {
+                0 => EffectiveAddressBase::BX_SI,
+                1 => EffectiveAddressBase::BX_DI,
+                2 => EffectiveAddressBase::BP_SI,
+                3 => EffectiveAddressBase::BP_DI,
+                4 => EffectiveAddressBase::SI,
+                5 => EffectiveAddressBase::DI,
+                6 => EffectiveAddressBase::BP,
+                7 => EffectiveAddressBase::BX,
+                _ => panic!("invalid rm value"),
+            };
+            Some((
+                Operand::Address(EffectiveAddress::Indirect {
+                    base,
+                    disp: Some(disp),
+                }),
+                1,
+            ))
+        }
+        0b10 => {
+            // 16-bit displacement follows.
+            if bytes.len() < 2 {
+                return None;
+            }
+            let disp = i16::from_le_bytes([bytes[0], bytes[1]]);
+            let base = match rm_val {
+                0 => EffectiveAddressBase::BX_SI,
+                1 => EffectiveAddressBase::BX_DI,
+                2 => EffectiveAddressBase::BP_SI,
+                3 => EffectiveAddressBase::BP_DI,
+                4 => EffectiveAddressBase::SI,
+                5 => EffectiveAddressBase::DI,
+                6 => EffectiveAddressBase::BP,
+                7 => EffectiveAddressBase::BX,
+                _ => return None,
+            };
+            Some((
+                Operand::Address(EffectiveAddress::Indirect {
+                    base,
+                    disp: Some(disp),
+                }),
+                2,
+            ))
+        }
+        _ => panic!("invalid mod value"),
+    }
+}
+
+/// A parsable item in the instruction format.
+enum P<'a> {
+    /// Binary constant pattern.
+    C(&'a BitSlice<u8, Msb0>),
+    /// The data (direction) flag.
+    D,
+    /// The wide flag.
+    W,
+    /// mod bits.
+    MOD,
+    /// reg bits.
+    REG,
+    /// rm bits.
+    RM,
+    /// Expect a data byte.
+    DATA,
+    /// Expect a data byte if W == 1.
+    DataIfW,
+    /// Implied value of the D flag.
+    ImplD(bool),
+}
+
+impl<'a> P<'a> {
+    fn bit_len(&self) -> u8 {
+        match self {
+            P::C(value) => value.len() as u8,
+            P::D => 1,
+            P::W => 1,
+            P::MOD => 3,
+            P::REG => 3,
+            P::RM => 2,
+            P::DATA => 8,
+            P::DataIfW => 8,
+            P::ImplD(_) => 0,
+        }
+    }
+}
+
+/// Instruction definition.
 pub struct IxDef<'a> {
     name: &'static str,
     items: Vec<P<'a>>,
-}
-
-// Map (reg_bits,w) -> a unique register index, in a 0..7 space for 8-bit or 16-bit
-fn decode_8086_register_index(reg_bits: u8, w: bool) -> RegisterIndex {
-    match (w, reg_bits) {
-        (false, 0) => RegisterIndex::AL,
-        (false, 1) => RegisterIndex::CL,
-        (false, 2) => RegisterIndex::DL,
-        (false, 3) => RegisterIndex::BL,
-        (false, 4) => RegisterIndex::AH,
-        (false, 5) => RegisterIndex::CH,
-        (false, 6) => RegisterIndex::DH,
-        (false, 7) => RegisterIndex::BH,
-
-        (true, 0) => RegisterIndex::AX,
-        (true, 1) => RegisterIndex::CX,
-        (true, 2) => RegisterIndex::DX,
-        (true, 3) => RegisterIndex::BX,
-        (true, 4) => RegisterIndex::SP,
-        (true, 5) => RegisterIndex::BP,
-        (true, 6) => RegisterIndex::SI,
-        (true, 7) => RegisterIndex::DI,
-        _ => panic!("unknown register"),
-    }
 }
 
 impl<'a> IxDef<'a> {
@@ -70,12 +231,12 @@ impl<'a> IxDef<'a> {
         Self { name, items }
     }
 
-    /// return the decoded instruction and the subslice of input bytes from where to continue further parsing
+    /// Returns the decoded instruction and the subslice of input bytes where to continue parsing.
     pub fn from_bytes<'b, 'c>(&'c self, bytes: &'b [u8]) -> Option<(Instruction, &'b [u8])> {
         let bits = bytes.view_bits::<Msb0>();
         let mut bit_offset = 0usize;
 
-        // local fields
+        // Local fields.
         let mut d_val: Option<bool> = None;
         let mut w_val: Option<bool> = None;
         let mut mod_val: Option<u8> = None;
@@ -84,9 +245,10 @@ impl<'a> IxDef<'a> {
         let mut data_lo: Option<u8> = None;
         let mut data_hi: Option<u8> = None;
 
-        // Helper that returns a bit slice rather than a numeric
+        // Helper: read the next `length` bits.
         let mut read_bits = |length: usize| -> Option<&BitSlice<u8, Msb0>> {
             if bit_offset + length > bits.len() {
+                tracing::error!("invalid bit offset");
                 return None;
             }
             let slice = &bits[bit_offset..bit_offset + length];
@@ -96,7 +258,7 @@ impl<'a> IxDef<'a> {
 
         for item in &self.items {
             match item {
-                // We compare the next `pattern.len()` bits to `pattern`.
+                // Compare the next bits to the expected pattern.
                 P::C(pattern) => {
                     let len = pattern.len();
                     let candidate = read_bits(len)?;
@@ -105,19 +267,15 @@ impl<'a> IxDef<'a> {
                     }
                 }
                 P::D => {
-                    // Next bit is the D flag
-                    let bit_slice = read_bits(1)?;
-                    d_val = Some(bit_slice[0]);
+                    let slice = read_bits(1)?;
+                    d_val = Some(slice[0]);
                 }
                 P::W => {
-                    // Next bit is the W flag
-                    let bit_slice = read_bits(1)?;
-                    w_val = Some(bit_slice[0]);
+                    let slice = read_bits(1)?;
+                    w_val = Some(slice[0]);
                 }
                 P::MOD => {
-                    // Next 3 bits are the mod field
-                    let slice = read_bits(3)?;
-                    // convert that 3-bit slice to u8
+                    let slice = read_bits(2)?;
                     let mut val = 0u8;
                     for bit in slice {
                         val = (val << 1) | (*bit as u8);
@@ -125,7 +283,6 @@ impl<'a> IxDef<'a> {
                     mod_val = Some(val);
                 }
                 P::REG => {
-                    // Next 3 bits are the reg field
                     let slice = read_bits(3)?;
                     let mut val = 0u8;
                     for bit in slice {
@@ -134,8 +291,7 @@ impl<'a> IxDef<'a> {
                     reg_val = Some(val);
                 }
                 P::RM => {
-                    // Next 2 bits are the rm field
-                    let slice = read_bits(2)?;
+                    let slice = read_bits(3)?;
                     let mut val = 0u8;
                     for bit in slice {
                         val = (val << 1) | (*bit as u8);
@@ -143,7 +299,6 @@ impl<'a> IxDef<'a> {
                     rm_val = Some(val);
                 }
                 P::DATA => {
-                    // Next 8 bits is the lower data byte
                     let slice = read_bits(8)?;
                     let mut val = 0u8;
                     for bit in slice {
@@ -152,7 +307,6 @@ impl<'a> IxDef<'a> {
                     data_lo = Some(val);
                 }
                 P::DataIfW => {
-                    // If W=1, read 8 more bits
                     if w_val == Some(true) {
                         let slice = read_bits(8)?;
                         let mut val = 0u8;
@@ -168,78 +322,77 @@ impl<'a> IxDef<'a> {
             }
         }
 
-        let bytes_consumed = (bit_offset + 7) / 8; // round up
-        if bytes_consumed > bytes.len() {
-            return None;
-        }
+        let mut bytes_consumed = (bit_offset + 7) / 8; // round up
 
-        // Construct the instruction (minimal example)
+        // Depending on the instruction variant, decode operands.
         match self.name {
             "mov" => {
                 let d_bit = if let Some(d) = d_val { d as u8 } else { 0 };
                 let w_bit = if let Some(w) = w_val { w as u8 } else { 0 };
                 let flags = (d_bit << 1) | w_bit;
 
-                // todo decode the operands
-                let inst = Instruction {
-                    size: bytes_consumed as u8,
-                    operation: self.name,
-                    flags,
-                    operands: [Operand::None, Operand::None],
-                };
-
-                Some((inst, &bytes[bytes_consumed..]))
+                // Two variants: one that has a REG field (mov r/m, r) and one without (mov r/m, imm).
+                if reg_val.is_some() {
+                    // Variant: mov r/m, r
+                    let rm = rm_val?;
+                    let m = mod_val?;
+                    let w = w_val.unwrap();
+                    // Decode the r/m operand (which might consume extra bytes if there’s a displacement)
+                    let (rm_operand, extra) =
+                        decode_rm_operand(m, rm, w, &bytes[bytes_consumed..])?;
+                    bytes_consumed += extra;
+                    let reg_operand =
+                        Operand::Register(decode_8086_register_index(reg_val.unwrap(), w));
+                    // d flag selects which operand is the destination register.
+                    let (first_operand, second_operand) = if d_val.unwrap() {
+                        (reg_operand, rm_operand)
+                    } else {
+                        (rm_operand, reg_operand)
+                    };
+                    let inst = Instruction {
+                        size: bytes_consumed as u8,
+                        operation: self.name,
+                        flags,
+                        operands: [first_operand, second_operand],
+                    };
+                    Some((inst, &bytes[bytes_consumed..]))
+                } else {
+                    // Variant: mov r/m, imm
+                    let rm = rm_val?;
+                    let m = mod_val?;
+                    let w = w_val.unwrap();
+                    let (rm_operand, extra) =
+                        decode_rm_operand(m, rm, w, &bytes[bytes_consumed..])?;
+                    bytes_consumed += extra;
+                    // Immediate value is already read from the pattern.
+                    let imm_operand = if w {
+                        // For a word immediate, we expect two bytes.
+                        let lo = data_lo?;
+                        let hi = data_hi?;
+                        let word = u16::from_le_bytes([lo, hi]);
+                        Operand::Immediate(Immediate::Word(word))
+                    } else {
+                        let byte = data_lo?;
+                        Operand::Immediate(Immediate::Byte(byte))
+                    };
+                    // In the mov r/m, imm encoding, r/m is the destination.
+                    let inst = Instruction {
+                        size: bytes_consumed as u8,
+                        operation: self.name,
+                        flags,
+                        operands: [rm_operand, imm_operand],
+                    };
+                    Some((inst, &bytes[bytes_consumed..]))
+                }
             }
             _ => unimplemented!(),
         }
     }
 }
 
-/// parsable item
-enum P<'a> {
-    /// binary constant
-    C(&'a BitSlice<u8, Msb0>),
-    /// The data flag
-    D,
-    /// wide flag
-    W,
-    /// mod bits
-    MOD,
-    /// reg bits
-    REG,
-    /// RM bits
-    RM,
-    /// expect data byte to be present
-    DATA,
-    /// expect data byte to be present if W = 1
-    DataIfW,
-    /// implied value of D flag
-    ImplD(bool),
-}
-
-impl<'a> P<'a> {
-    fn bit_len(&self) -> u8 {
-        match self {
-            P::C(value) => {
-                dbg!(value);
-                value.len() as u8
-            }
-            P::D => 1,
-            P::W => 1,
-            P::MOD => 3,
-            P::REG => 3,
-            P::RM => 2,
-            P::DATA => 8,
-            P::DataIfW => 8,
-            P::ImplD(_) => 0,
-        }
-    }
-}
-
-// inspiration: https://github.com/cmuratori/computer_enhance/blob/main/perfaware/sim86/sim86_instruction_table.inl
+// Example instruction table.
 pub fn ix_table() -> [IxDef<'static>; 2] {
     use P::*;
-
     [
         IxDef::new(
             "mov",
@@ -381,122 +534,75 @@ mod table_tests {
 //     }
 // }
 
-// #[cfg(test)]
-// mod tests {
-//     use std::{fs::File, io::Write as _};
+#[cfg(test)]
+mod tests {
+    use core::panic;
+    use std::{fs::File, io::Write as _};
 
-//     use itertools::Itertools as _;
-//     use pretty_assertions::{assert_eq, assert_str_eq};
-//     use tempdir::TempDir;
-//     use xshell::cmd;
+    use itertools::Itertools as _;
+    use pretty_assertions::{assert_eq, assert_str_eq};
+    use tempdir::TempDir;
+    use test_log::test;
+    use xshell::cmd;
 
-//     use super::*;
+    use super::*;
 
-//     fn read_and_test(test: &str) {
-//         let content_binary = std::fs::read(format!("fixtures/{test:}")).unwrap();
-//         let derived_set_binary = InstructionSet::from_bytes(&content_binary);
+    fn read_and_test(test: &str) {
+        let content_binary = std::fs::read(format!("fixtures/{test:}")).unwrap();
+        let (derived_set_binary, _) = ix_table()[0].from_bytes(&content_binary).unwrap();
 
-//         generate_and_compare_machine_code(test, &derived_set_binary);
-//     }
+        // generate_and_compare_machine_code(test, &derived_set_binary);
+        dbg!(&derived_set_binary);
+        panic!()
+    }
 
-//     fn generate_and_compare_machine_code(test: &str, ix_set: &InstructionSet) {
-//         let output = format!("{ix_set:}");
-//         let sh = xshell::Shell::new().unwrap();
-//         let fixture_machine_code_file = sh.current_dir().join("fixtures").join(test);
-//         let fixture_asm_code_file = sh
-//             .current_dir()
-//             .join("fixtures")
-//             .join(format!("{test:}.asm"));
-//         let expected_asm_content = sh
-//             .read_file(fixture_asm_code_file)
-//             .unwrap()
-//             .lines()
-//             .filter(|x| !x.starts_with(';'))
-//             .filter(|x| !x.is_empty())
-//             .enumerate()
-//             .map(|(idx, ix)| format!("{ix} ; {idx:?}"))
-//             .join("\n");
-//         let expected_content = sh.read_binary_file(fixture_machine_code_file).unwrap();
+    fn buffer_to_nice_bytes(buffer: &[u8]) -> String {
+        buffer
+            .iter()
+            .map(|byte| format!("0b{:08b}", byte))
+            .collect::<Vec<String>>()
+            .join(" ")
+    }
 
-//         // write the temp asm to file
-//         let temp_dir = TempDir::new(test).unwrap();
-//         let asm_output_file = temp_dir.path().join(format!("{test:}.asm"));
-//         let machine_code_output_file = temp_dir.path().join(test);
-//         let mut f = File::create(&asm_output_file).unwrap();
-//         f.write_all(output.as_bytes()).unwrap();
-//         f.sync_all().unwrap();
+    #[test]
+    fn test_listing_37() {
+        let test = "listing_0037_single_register_mov";
+        read_and_test(test);
+    }
 
-//         // run the nasm command
-//         let _g = sh.push_dir(temp_dir.path());
-//         cmd!(sh, "nasm {asm_output_file} -o {machine_code_output_file}")
-//             .run()
-//             .unwrap();
+    //     #[test]
+    //     fn test_listing_38() {
+    //         let test = "listing_0038_many_register_mov";
+    //         read_and_test(test);
+    //     }
 
-//         // read the generated binary
-//         let content_binary = sh.read_binary_file(&machine_code_output_file).unwrap();
-//         println!("{output:}");
-//         assert_eq!(
-//             buffer_to_nice_bytes(&expected_content),
-//             buffer_to_nice_bytes(&content_binary)
-//         );
+    //     #[test]
+    //     fn test_listing_39() {
+    //         let test = "listing_0039_more_movs";
+    //         read_and_test(test);
+    //     }
 
-//         // let re_derived_set_binary = InstructionSet::from_bytes(&content_binary);
-//         // assert_eq!(ix_set, &re_derived_set_binary);
-//         // if content_binary != expected_content {
-//         //     assert_str_eq!(expected_asm_content, output);
-//         // }
+    //     #[test]
+    //     fn test_listing_40() {
+    //         let test = "listing_0040_challenge_movs";
+    //         read_and_test(test);
+    //     }
 
-//         // println!()
-//         // assert_eq!(content_binary, expected_content);
-//     }
+    //     #[test]
+    //     #[ignore = "jumps and labels ar PITA to generate but it works (manually validated, trust me bro)"]
+    //     fn test_listing_41() {
+    //         let test = "listing_0041_add_sub_cmp_jnz";
+    //         read_and_test(test);
+    //     }
 
-//     fn buffer_to_nice_bytes(buffer: &[u8]) -> String {
-//         buffer
-//             .iter()
-//             .map(|byte| format!("0b{:08b}", byte))
-//             .collect::<Vec<String>>()
-//             .join(" ")
-//     }
+    //     #[test]
+    //     fn test_get_expected_register() {
+    //         let base_data = 0b00000111_u8;
+    //         let register = decode_reg8(base_data);
+    //         assert_eq!(register, Reg8::BH);
 
-//     #[test]
-//     fn test_listing_37() {
-//         let test = "listing_0037_single_register_mov";
-//         read_and_test(test);
-//     }
-
-//     #[test]
-//     fn test_listing_38() {
-//         let test = "listing_0038_many_register_mov";
-//         read_and_test(test);
-//     }
-
-//     #[test]
-//     fn test_listing_39() {
-//         let test = "listing_0039_more_movs";
-//         read_and_test(test);
-//     }
-
-//     #[test]
-//     fn test_listing_40() {
-//         let test = "listing_0040_challenge_movs";
-//         read_and_test(test);
-//     }
-
-//     #[test]
-//     #[ignore = "jumps and labels ar PITA to generate but it works (manually validated, trust me bro)"]
-//     fn test_listing_41() {
-//         let test = "listing_0041_add_sub_cmp_jnz";
-//         read_and_test(test);
-//     }
-
-//     #[test]
-//     fn test_get_expected_register() {
-//         let base_data = 0b00000111_u8;
-//         let register = decode_reg8(base_data);
-//         assert_eq!(register, Reg8::BH);
-
-//         let base_data = 0b00111000_u8;
-//         let register = decode_reg8(base_data >> 3);
-//         assert_eq!(register, Reg8::BH);
-//     }
-// }
+    //         let base_data = 0b00111000_u8;
+    //         let register = decode_reg8(base_data >> 3);
+    //         assert_eq!(register, Reg8::BH);
+    //     }
+}

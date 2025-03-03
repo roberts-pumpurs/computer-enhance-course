@@ -75,11 +75,14 @@ num-traits = "0.2"
 num-derive = "0.4"
 bytemuck = "1"
 bitvec = "1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
 
 [dev-dependencies]
 xshell.workspace = true
 pretty_assertions = "1"
 tempdir = "0.3"
+test-log = { version = "0.2", features = ["trace"] }
 
 [lints]
 workspace = true
