@@ -10,16 +10,21 @@ pub struct InstructionSet {
 pub fn decode(mut bytes_to_pass: &[u8]) -> InstructionSet {
     let mut ixs = vec![];
     let ix_table = ix_table();
+    let mut sanity_tracker = 0;
     while bytes_to_pass.len() > 0 {
+        dbg!(&bytes_to_pass.len());
+        println!("{ixs:?}");
+        // println!("aa");
         for ix_def in ix_table.iter() {
             let res = ix_def.from_bytes(bytes_to_pass);
             if let Some((ix, new_bytes)) = res {
+                sanity_tracker = 0;
                 ixs.push(ix);
                 bytes_to_pass = new_bytes;
-
-                break;
             }
         }
+        sanity_tracker += 1;
+        assert!(sanity_tracker < 5);
     }
     InstructionSet { ixs }
 }
@@ -232,7 +237,7 @@ fn decode_rm_operand(mod_val: u8, rm_val: u8, w: bool, bytes: &[u8]) -> Option<(
         0b01 => {
             // 8-bit displacement follows.
             if bytes.len() < 1 {
-                return None;
+                panic!("not enough data bytes to read displacement");
             }
             let disp = bytes[0] as i8 as i16;
             let base = match rm_val {
@@ -349,7 +354,6 @@ impl<'a> IxDef<'a> {
         // Helper: read the next `length` bits.
         let mut read_bits = |length: usize| -> Option<&BitSlice<u8, Msb0>> {
             if bit_offset + length > bits.len() {
-                tracing::error!("invalid bit offset");
                 return None;
             }
             let slice = &bits[bit_offset..bit_offset + length];
@@ -638,11 +642,11 @@ mod tests {
         read_and_test(test);
     }
 
-    //     #[test]
-    //     fn test_listing_39() {
-    //         let test = "listing_0039_more_movs";
-    //         read_and_test(test);
-    //     }
+    #[test]
+    fn test_listing_39() {
+        let test = "listing_0039_more_movs";
+        read_and_test(test);
+    }
 
     //     #[test]
     //     fn test_listing_40() {
