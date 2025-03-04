@@ -1,15 +1,58 @@
-use bitvec::prelude::*;
+use core::fmt;
 
-#[derive(Debug)]
+use bitvec::prelude::*;
+use num_traits::Signed;
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct InstructionSet {
+    ixs: Vec<Instruction>,
+}
+pub fn decode(mut bytes_to_pass: &[u8]) -> InstructionSet {
+    let mut ixs = vec![];
+    let ix_table = ix_table();
+    while bytes_to_pass.len() > 0 {
+        for ix_def in ix_table.iter() {
+            let res = ix_def.from_bytes(bytes_to_pass);
+            if let Some((ix, new_bytes)) = res {
+                ixs.push(ix);
+                bytes_to_pass = new_bytes;
+
+                break;
+            }
+        }
+    }
+    InstructionSet { ixs }
+}
+
+impl fmt::Display for InstructionSet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "bits 16")?;
+        for instr in &self.ixs {
+            writeln!(f, "{instr}")?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for Instruction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{:} {:}, {:}",
+            self.operation, self.operands[0], self.operands[1]
+        )
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct Instruction {
     size: u8,
     operation: &'static str,
-    flags: u8,
     operands: [Operand; 2],
 }
 
 #[repr(u8)]
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum RegisterIndex {
     // 8-bit
     AL,
@@ -32,7 +75,7 @@ pub enum RegisterIndex {
 }
 
 /// An operand can be one of several kinds.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum Operand {
     None,
     Address(EffectiveAddress),
@@ -40,19 +83,77 @@ enum Operand {
     Immediate(Immediate),
 }
 
+impl fmt::Display for Operand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Operand::None => write!(f, ""),
+            Operand::Address(effective_address) => match effective_address {
+                EffectiveAddress::Direct(val) => {
+                    write!(f, "{}", val)
+                }
+                EffectiveAddress::Indirect { base, disp } => match disp {
+                    Some(val) => {
+                        let sign = if val.is_positive() { "+" } else { "-" };
+                        match base {
+                            EffectiveAddressBase::BX_SI => write!(f, "[bx + si {} {}]", sign, val),
+                            EffectiveAddressBase::BX_DI => write!(f, "[bx + di {} {}]", sign, val),
+                            EffectiveAddressBase::BP_SI => write!(f, "[bp + si {} {}]", sign, val),
+                            EffectiveAddressBase::BP_DI => write!(f, "[bp + di {} {}]", sign, val),
+                            EffectiveAddressBase::SI => write!(f, "[si {} {}]", sign, val),
+                            EffectiveAddressBase::DI => write!(f, "[di {} {}]", sign, val),
+                            EffectiveAddressBase::BP => write!(f, "[bp {} {}]", sign, val),
+                            EffectiveAddressBase::BX => write!(f, "[bx {} {}]", sign, val),
+                        }
+                    }
+                    None => match base {
+                        EffectiveAddressBase::BX_SI => write!(f, "[bx + si]"),
+                        EffectiveAddressBase::BX_DI => write!(f, "[bx + di]"),
+                        EffectiveAddressBase::BP_SI => write!(f, "[bp + si]"),
+                        EffectiveAddressBase::BP_DI => write!(f, "[bp + di]"),
+                        EffectiveAddressBase::SI => write!(f, "[si]"),
+                        EffectiveAddressBase::DI => write!(f, "[di]"),
+                        EffectiveAddressBase::BP => write!(f, "[bp]"),
+                        EffectiveAddressBase::BX => write!(f, "[bx]"),
+                    },
+                },
+            },
+            Operand::Register(register_index) => match register_index {
+                RegisterIndex::AL => write!(f, "al"),
+                RegisterIndex::CL => write!(f, "cl"),
+                RegisterIndex::DL => write!(f, "dl"),
+                RegisterIndex::BL => write!(f, "bl"),
+                RegisterIndex::AH => write!(f, "ah"),
+                RegisterIndex::CH => write!(f, "ch"),
+                RegisterIndex::DH => write!(f, "dh"),
+                RegisterIndex::BH => write!(f, "bh"),
+                RegisterIndex::AX => write!(f, "ax"),
+                RegisterIndex::CX => write!(f, "cx"),
+                RegisterIndex::DX => write!(f, "dx"),
+                RegisterIndex::BX => write!(f, "bx"),
+                RegisterIndex::SP => write!(f, "sp"),
+                RegisterIndex::BP => write!(f, "bp"),
+                RegisterIndex::SI => write!(f, "si"),
+                RegisterIndex::DI => write!(f, "di"),
+            },
+            Operand::Immediate(immediate) => match immediate {
+                Immediate::Byte(val) => write!(f, "{}", val),
+                Immediate::Word(val) => write!(f, "{}", val),
+            },
+        }
+    }
+}
+
 /// Immediate values may be 8 or 16 bits.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Immediate {
     Byte(u8),
     Word(u16),
 }
 
 /// For memory operands, we support both direct addressing and register indirect addressing with optional displacement.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum EffectiveAddress {
-    /// When mod == 0 and rm == 6, the operand is a 16-bit direct address.
     Direct(u16),
-    /// For other cases, we record the base registers plus an optional displacement.
     Indirect {
         base: EffectiveAddressBase,
         disp: Option<i16>,
@@ -60,7 +161,7 @@ pub enum EffectiveAddress {
 }
 
 /// The possible base register combinations used in 8086 effective address computation.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum EffectiveAddressBase {
     BX_SI,
     BX_DI,
@@ -324,69 +425,49 @@ impl<'a> IxDef<'a> {
 
         let mut bytes_consumed = (bit_offset + 7) / 8; // round up
 
-        // Depending on the instruction variant, decode operands.
-        match self.name {
-            "mov" => {
-                let d_bit = if let Some(d) = d_val { d as u8 } else { 0 };
-                let w_bit = if let Some(w) = w_val { w as u8 } else { 0 };
-                let flags = (d_bit << 1) | w_bit;
-
-                // Two variants: one that has a REG field (mov r/m, r) and one without (mov r/m, imm).
-                if reg_val.is_some() {
-                    // Variant: mov r/m, r
-                    let rm = rm_val?;
-                    let m = mod_val?;
-                    let w = w_val.unwrap();
-                    // Decode the r/m operand (which might consume extra bytes if there’s a displacement)
-                    let (rm_operand, extra) =
-                        decode_rm_operand(m, rm, w, &bytes[bytes_consumed..])?;
-                    bytes_consumed += extra;
-                    let reg_operand =
-                        Operand::Register(decode_8086_register_index(reg_val.unwrap(), w));
-                    // d flag selects which operand is the destination register.
-                    let (first_operand, second_operand) = if d_val.unwrap() {
-                        (reg_operand, rm_operand)
-                    } else {
-                        (rm_operand, reg_operand)
-                    };
-                    let inst = Instruction {
-                        size: bytes_consumed as u8,
-                        operation: self.name,
-                        flags,
-                        operands: [first_operand, second_operand],
-                    };
-                    Some((inst, &bytes[bytes_consumed..]))
-                } else {
-                    // Variant: mov r/m, imm
-                    let rm = rm_val?;
-                    let m = mod_val?;
-                    let w = w_val.unwrap();
-                    let (rm_operand, extra) =
-                        decode_rm_operand(m, rm, w, &bytes[bytes_consumed..])?;
-                    bytes_consumed += extra;
-                    // Immediate value is already read from the pattern.
-                    let imm_operand = if w {
-                        // For a word immediate, we expect two bytes.
-                        let lo = data_lo?;
-                        let hi = data_hi?;
-                        let word = u16::from_le_bytes([lo, hi]);
-                        Operand::Immediate(Immediate::Word(word))
-                    } else {
-                        let byte = data_lo?;
-                        Operand::Immediate(Immediate::Byte(byte))
-                    };
-                    // In the mov r/m, imm encoding, r/m is the destination.
-                    let inst = Instruction {
-                        size: bytes_consumed as u8,
-                        operation: self.name,
-                        flags,
-                        operands: [rm_operand, imm_operand],
-                    };
-                    Some((inst, &bytes[bytes_consumed..]))
-                }
+        let rm_operand = match (rm_val, mod_val, w_val) {
+            (Some(rm), Some(mod_val), Some(w)) => {
+                // Decode the r/m operand (which might consume extra bytes if there’s a displacement)
+                let (rm_operand, extra) =
+                    decode_rm_operand(mod_val, rm, w, &bytes[bytes_consumed..])?;
+                bytes_consumed += extra;
+                rm_operand
             }
             _ => unimplemented!(),
-        }
+        };
+
+        let reg_operand = match (data_lo, data_hi) {
+            // first, see if we have an immediate as an operand
+            (None, Some(_)) => unreachable!(),
+            (Some(byte), None) => Operand::Immediate(Immediate::Byte(byte)),
+            (Some(lo), Some(hi)) => {
+                let word = u16::from_le_bytes([lo, hi]);
+                Operand::Immediate(Immediate::Word(word))
+            }
+            (None, None) => {
+                // otherwise, see if we can decode the operand from reg value
+                if let Some(reg_val) = reg_val {
+                    let reg_operand =
+                        Operand::Register(decode_8086_register_index(reg_val, w_val.unwrap()));
+                    reg_operand
+                } else {
+                    unimplemented!()
+                }
+            }
+        };
+
+        // d flag selects which operand is the destination register.
+        let (first_operand, second_operand) = if d_val.unwrap() {
+            (reg_operand, rm_operand)
+        } else {
+            (rm_operand, reg_operand)
+        };
+        let inst = Instruction {
+            size: bytes_consumed as u8,
+            operation: self.name,
+            operands: [first_operand, second_operand],
+        };
+        Some((inst, &bytes[bytes_consumed..]))
     }
 }
 
@@ -478,65 +559,8 @@ mod table_tests {
     }
 }
 
-// fn decode_reg8(reg: u8) -> Reg8 {
-//     match reg {
-//         0b000 => Reg8::AL,
-//         0b001 => Reg8::CL,
-//         0b010 => Reg8::DL,
-//         0b011 => Reg8::BL,
-//         0b100 => Reg8::AH,
-//         0b101 => Reg8::CH,
-//         0b110 => Reg8::DH,
-//         0b111 => Reg8::BH,
-//         _ => unreachable!(),
-//     }
-// }
-
-// fn decode_reg16(reg: u8) -> Reg16 {
-//     match reg {
-//         0b000 => Reg16::AX,
-//         0b001 => Reg16::CX,
-//         0b010 => Reg16::DX,
-//         0b011 => Reg16::BX,
-//         0b100 => Reg16::SP,
-//         0b101 => Reg16::BP,
-//         0b110 => Reg16::SI,
-//         0b111 => Reg16::DI,
-//         _ => unreachable!(),
-//     }
-// }
-
-// fn decode_mod00_rm<I: Iterator<Item = u8>>(rm: u8, mut bytes: I) -> MovOperand {
-//     MovOperand::Mod00(match rm {
-//         0b000 => Mod00EffectiveAddr::BxPlusSi,
-//         0b001 => Mod00EffectiveAddr::BxPlusDi,
-//         0b010 => Mod00EffectiveAddr::BPPlusSi,
-//         0b011 => Mod00EffectiveAddr::BPPlusDi,
-//         0b100 => Mod00EffectiveAddr::Si,
-//         0b101 => Mod00EffectiveAddr::Di,
-//         0b110 => Mod00EffectiveAddr::DirectAddr((bytes.next().unwrap(), bytes.next().unwrap())),
-//         0b111 => Mod00EffectiveAddr::Bx,
-//         _ => unreachable!(),
-//     })
-// }
-
-// fn decode_mod01_mod02_rm<T>(rm: u8, addr: T) -> EffectiveAddr<T> {
-//     match rm {
-//         0b000 => EffectiveAddr::BxPlusSi(addr),
-//         0b001 => EffectiveAddr::BxPlusDi(addr),
-//         0b010 => EffectiveAddr::BPPlusSi(addr),
-//         0b011 => EffectiveAddr::BPPlusDi(addr),
-//         0b100 => EffectiveAddr::Si(addr),
-//         0b101 => EffectiveAddr::Di(addr),
-//         0b110 => EffectiveAddr::Bp(addr),
-//         0b111 => EffectiveAddr::Bx(addr),
-//         _ => unreachable!(),
-//     }
-// }
-
 #[cfg(test)]
 mod tests {
-    use core::panic;
     use std::{fs::File, io::Write as _};
 
     use itertools::Itertools as _;
@@ -549,19 +573,57 @@ mod tests {
 
     fn read_and_test(test: &str) {
         let content_binary = std::fs::read(format!("fixtures/{test:}")).unwrap();
-        let (derived_set_binary, _) = ix_table()[0].from_bytes(&content_binary).unwrap();
 
-        // generate_and_compare_machine_code(test, &derived_set_binary);
-        dbg!(&derived_set_binary);
-        panic!()
+        let bytes_to_pass = content_binary.as_slice();
+        let ixs = decode(bytes_to_pass);
+
+        generate_and_compare_machine_code(test, &ixs);
     }
 
-    fn buffer_to_nice_bytes(buffer: &[u8]) -> String {
-        buffer
-            .iter()
-            .map(|byte| format!("0b{:08b}", byte))
-            .collect::<Vec<String>>()
-            .join(" ")
+    fn generate_and_compare_machine_code(test: &str, ix_set: &InstructionSet) {
+        let output = format!("{ix_set:}");
+        let sh = xshell::Shell::new().unwrap();
+        let fixture_machine_code_file = sh.current_dir().join("fixtures").join(test);
+        let fixture_asm_code_file = sh
+            .current_dir()
+            .join("fixtures")
+            .join(format!("{test:}.asm"));
+        let expected_asm_content = sh
+            .read_file(fixture_asm_code_file)
+            .unwrap()
+            .lines()
+            .filter(|x| !x.starts_with(';'))
+            .filter(|x| !x.is_empty())
+            .enumerate()
+            .map(|(idx, ix)| format!("{ix} ; {idx:?}"))
+            .join("\n");
+        let expected_content = sh.read_binary_file(fixture_machine_code_file).unwrap();
+
+        // write the temp asm to file
+        let temp_dir = TempDir::new(test).unwrap();
+        let asm_output_file = temp_dir.path().join(format!("{test:}.asm"));
+        let machine_code_output_file = temp_dir.path().join(test);
+        let mut f = File::create(&asm_output_file).unwrap();
+        f.write_all(output.as_bytes()).unwrap();
+        f.sync_all().unwrap();
+
+        // run the nasm command
+        let _g = sh.push_dir(temp_dir.path());
+        cmd!(sh, "nasm {asm_output_file} -o {machine_code_output_file}")
+            .run()
+            .unwrap();
+
+        // read the generated binary
+        let content_binary = sh.read_binary_file(&machine_code_output_file).unwrap();
+        println!("{output:}");
+
+        let re_derived_set_binary = decode(&content_binary);
+        assert_eq!(ix_set, &re_derived_set_binary);
+        if content_binary != expected_content {
+            assert_str_eq!(expected_asm_content, output);
+        }
+
+        assert_eq!(content_binary, expected_content);
     }
 
     #[test]
@@ -570,11 +632,11 @@ mod tests {
         read_and_test(test);
     }
 
-    //     #[test]
-    //     fn test_listing_38() {
-    //         let test = "listing_0038_many_register_mov";
-    //         read_and_test(test);
-    //     }
+    #[test]
+    fn test_listing_38() {
+        let test = "listing_0038_many_register_mov";
+        read_and_test(test);
+    }
 
     //     #[test]
     //     fn test_listing_39() {

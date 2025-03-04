@@ -2,7 +2,7 @@ use std::fmt;
 
 use num_derive::FromPrimitive;
 
-mod binary_parsing;
+pub mod binary_parsing;
 
 // #[derive(Debug, PartialEq, Eq)]
 // pub struct InstructionSet {
