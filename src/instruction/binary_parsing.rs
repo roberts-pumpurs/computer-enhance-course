@@ -10,21 +10,18 @@ pub struct InstructionSet {
 pub fn decode(mut bytes_to_pass: &[u8]) -> InstructionSet {
     let mut ixs = vec![];
     let ix_table = ix_table();
-    let mut sanity_tracker = 0;
-    while bytes_to_pass.len() > 0 {
-        dbg!(&bytes_to_pass.len());
-        println!("{ixs:?}");
-        // println!("aa");
+    'top: while bytes_to_pass.len() > 0 {
         for ix_def in ix_table.iter() {
             let res = ix_def.from_bytes(bytes_to_pass);
             if let Some((ix, new_bytes)) = res {
-                sanity_tracker = 0;
+                println!("{ix}");
                 ixs.push(ix);
                 bytes_to_pass = new_bytes;
+                continue 'top;
             }
         }
-        sanity_tracker += 1;
-        assert!(sanity_tracker < 5);
+
+        panic!("invalid binary ix");
     }
     InstructionSet { ixs }
 }
@@ -466,6 +463,7 @@ impl<'a> IxDef<'a> {
         } else {
             (rm_operand, reg_operand)
         };
+        dbg!(&bytes_consumed);
         let inst = Instruction {
             size: bytes_consumed as u8,
             operation: self.name,
