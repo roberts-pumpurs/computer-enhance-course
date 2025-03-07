@@ -426,9 +426,18 @@ impl<'a> IxDef<'a> {
 
         let mut bytes_consumed = (bit_offset + 7) / 8; // round up
 
-        let mut first_operand = Operand::None;
-        let mut second_operand = Operand::None;
-        // todo conditionally assign the opeands depending on which params do we have avialable
+        // parse operands
+        let reg_operand;
+        let second_operand;
+        // parse reg opernad
+        if let Some(reg_val) = reg_val {
+            reg_operand = Operand::Register(decode_8086_register_index(reg_val, w_val.unwrap()));
+        } else {
+            let operand = operand_from_data(data_lo, data_hi);
+            reg_operand = operand;
+        }
+
+        // parse the second opernad
         match (rm_val, mod_val, w_val) {
             (Some(rm), Some(mod_val), Some(w)) => {
                 // Decode the r/m operand (which might consume extra bytes if there’s a displacement)
@@ -438,37 +447,18 @@ impl<'a> IxDef<'a> {
                 second_operand = rm_operand;
             }
             (None, None, Some(w)) => {
-                // noop
+                second_operand = operand_from_data(data_lo, data_hi);
             }
             _ => unimplemented!(),
         };
 
-        match (data_lo, data_hi) {
-            // first, see if we have an immediate as an operand
-            (None, Some(_)) => unreachable!(),
-            (Some(byte), None) => {
-                first_operand = Operand::Immediate(Immediate::Byte(byte));
-            }
-            (Some(lo), Some(hi)) => {
-                let word = u16::from_le_bytes([lo, hi]);
-                first_operand = Operand::Immediate(Immediate::Word(word));
-            }
-            (None, None) => {
-                // otherwise, see if we can decode the operand from reg value
-                if let Some(reg_val) = reg_val {
-                    first_operand =
-                        Operand::Register(decode_8086_register_index(reg_val, w_val.unwrap()));
-                } else {
-                    unimplemented!()
-                }
-            }
-        };
-
         // d flag selects which operand is the destination register.
+        // if d -- ix source is REG field
+        // if not d -- destination is the REG field
         let (first_operand, second_operand) = if d_val.unwrap() {
-            (first_operand, second_operand)
+            (reg_operand, second_operand)
         } else {
-            (second_operand, first_operand)
+            (second_operand, reg_operand)
         };
         let inst = Instruction {
             size: bytes_consumed as u8,
@@ -476,6 +466,19 @@ impl<'a> IxDef<'a> {
             operands: [first_operand, second_operand],
         };
         Some((inst, &bytes[bytes_consumed..]))
+    }
+}
+
+fn operand_from_data(data_lo: Option<u8>, data_hi: Option<u8>) -> Operand {
+    match (data_lo, data_hi) {
+        // first, see if we have an immediate as an operand
+        (None, Some(_)) => unreachable!(),
+        (Some(byte), None) => Operand::Immediate(Immediate::Byte(byte)),
+        (Some(lo), Some(hi)) => {
+            let word = u16::from_le_bytes([lo, hi]);
+            Operand::Immediate(Immediate::Word(word))
+        }
+        (None, None) => Operand::None,
     }
 }
 
@@ -632,11 +635,11 @@ mod tests {
         read_and_test(test);
     }
 
-    //     #[test]
-    //     fn test_listing_40() {
-    //         let test = "listing_0040_challenge_movs";
-    //         read_and_test(test);
-    //     }
+    #[test]
+    fn test_listing_40() {
+        let test = "listing_0040_challenge_movs";
+        read_and_test(test);
+    }
 
     //     #[test]
     //     #[ignore = "jumps and labels ar PITA to generate but it works (manually validated, trust me bro)"]
