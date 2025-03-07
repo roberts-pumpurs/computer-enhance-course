@@ -97,14 +97,22 @@ impl fmt::Display for Operand {
                     Some(val) => {
                         let sign = if val.is_positive() { "+" } else { "-" };
                         match base {
-                            EffectiveAddressBase::BX_SI => write!(f, "[bx + si {} {}]", sign, val),
-                            EffectiveAddressBase::BX_DI => write!(f, "[bx + di {} {}]", sign, val),
-                            EffectiveAddressBase::BP_SI => write!(f, "[bp + si {} {}]", sign, val),
-                            EffectiveAddressBase::BP_DI => write!(f, "[bp + di {} {}]", sign, val),
-                            EffectiveAddressBase::SI => write!(f, "[si {} {}]", sign, val),
-                            EffectiveAddressBase::DI => write!(f, "[di {} {}]", sign, val),
-                            EffectiveAddressBase::BP => write!(f, "[bp {} {}]", sign, val),
-                            EffectiveAddressBase::BX => write!(f, "[bx {} {}]", sign, val),
+                            EffectiveAddressBase::BX_SI => {
+                                write!(f, "[bx + si {} {}]", sign, val.abs())
+                            }
+                            EffectiveAddressBase::BX_DI => {
+                                write!(f, "[bx + di {} {}]", sign, val.abs())
+                            }
+                            EffectiveAddressBase::BP_SI => {
+                                write!(f, "[bp + si {} {}]", sign, val.abs())
+                            }
+                            EffectiveAddressBase::BP_DI => {
+                                write!(f, "[bp + di {} {}]", sign, val.abs())
+                            }
+                            EffectiveAddressBase::SI => write!(f, "[si {} {}]", sign, val.abs()),
+                            EffectiveAddressBase::DI => write!(f, "[di {} {}]", sign, val.abs()),
+                            EffectiveAddressBase::BP => write!(f, "[bp {} {}]", sign, val.abs()),
+                            EffectiveAddressBase::BX => write!(f, "[bx {} {}]", sign, val.abs()),
                         }
                     }
                     None => match base {
@@ -314,7 +322,7 @@ enum P<'a> {
     /// Implied value of the rm bits
     ImplRm(u8),
     /// Implied value of the reg bits
-    ImplReg(RegisterIndex),
+    ImplRegBasedOnW(RegisterIndex, RegisterIndex),
 }
 
 impl<'a> P<'a> {
@@ -328,12 +336,12 @@ impl<'a> P<'a> {
             P::RM => 2,
             P::DATA => 8,
             P::DataIfW => 8,
-            P::ImplD(_) => 0,
             P::AddrLo => 8,
             P::AddrHi => 8,
+            P::ImplD(_) => 0,
             P::ImplMod(_) => 0,
             P::ImplRm(_) => 0,
-            P::ImplReg(_) => 0,
+            P::ImplRegBasedOnW(_, _) => 0,
         }
     }
 }
@@ -463,8 +471,12 @@ impl<'a> IxDef<'a> {
                 P::ImplRm(rm) => {
                     rm_val = Some(*rm);
                 }
-                P::ImplReg(register_index) => {
-                    reg_operand = Some(Operand::Register(*register_index));
+                P::ImplRegBasedOnW(if_w, if_not_w) => {
+                    if w_val.unwrap() {
+                        reg_operand = Some(Operand::Register(*if_w));
+                    } else {
+                        reg_operand = Some(Operand::Register(*if_not_w));
+                    }
                 }
             }
         }
@@ -476,7 +488,17 @@ impl<'a> IxDef<'a> {
             if let Some(reg_val) = reg_val {
                 Operand::Register(decode_8086_register_index(reg_val, w_val.unwrap()))
             } else {
-                operand_from_data(data_lo, data_hi)
+                match data_lo {
+                    Some(data_lo) => operand_from_data(data_lo, data_hi),
+                    None => match (addr_lo, addr_hi) {
+                        (None, None) => todo!(),
+                        (Some(lo), Some(hi)) => {
+                            let addr = u16::from_le_bytes([lo, hi]);
+                            Operand::Address(EffectiveAddress::Direct(addr))
+                        }
+                        _ => unreachable!(),
+                    },
+                }
             }
         } else {
             reg_operand.unwrap()
@@ -491,9 +513,19 @@ impl<'a> IxDef<'a> {
                 bytes_consumed += extra;
                 second_operand = rm_operand;
             }
-            (None, None, Some(w)) => {
-                second_operand = operand_from_data(data_lo, data_hi);
-            }
+            (None, None, Some(_w)) => match data_lo {
+                Some(data_lo) => {
+                    second_operand = operand_from_data(data_lo, data_hi);
+                }
+                None => match (addr_lo, addr_hi) {
+                    (None, None) => todo!(),
+                    (Some(lo), Some(hi)) => {
+                        let addr = u16::from_le_bytes([lo, hi]);
+                        second_operand = Operand::Address(EffectiveAddress::Direct(addr));
+                    }
+                    _ => unreachable!(),
+                },
+            },
             _ => unimplemented!(),
         };
 
@@ -514,22 +546,20 @@ impl<'a> IxDef<'a> {
     }
 }
 
-fn operand_from_data(data_lo: Option<u8>, data_hi: Option<u8>) -> Operand {
-    match (data_lo, data_hi) {
+fn operand_from_data(data_lo: u8, data_hi: Option<u8>) -> Operand {
+    match (data_hi) {
         // first, see if we have an immediate as an operand
-        (None, Some(_)) => unreachable!(),
-        (Some(byte), None) => Operand::Immediate(Immediate::Byte(byte)),
-        (Some(lo), Some(hi)) => {
-            let word = u16::from_le_bytes([lo, hi]);
+        (None) => Operand::Immediate(Immediate::Byte(data_lo)),
+        (Some(hi)) => {
+            let word = u16::from_le_bytes([data_lo, hi]);
             Operand::Immediate(Immediate::Word(word))
         }
-        (None, None) => Operand::None,
     }
 }
 
 // https://github.com/cmuratori/computer_enhance/blob/c0b12bed53a004e1f6ca2995dc3fb73d793ac6b8/perfaware/sim86/sim86_instruction_table.inl#L58
 #[rustfmt::skip]
-pub fn ix_table() -> [IxDef<'static>; 4] {
+pub fn ix_table() -> [IxDef<'static>; 5] {
     use P::*;
     [
         // reg/mem to/from reg
@@ -539,7 +569,9 @@ pub fn ix_table() -> [IxDef<'static>; 4] {
         // imm to reg 
         IxDef::new(  "mov",  vec![ C(bits!(static u8, Msb0; 1, 0, 1, 1)), W, REG, DATA, DataIfW, ImplD(true)]),
         // mem to accumulator
-        IxDef::new(  "mov",  vec![ C(bits!(static u8, Msb0; 1, 0, 1, 0, 0, 0, 0)), W, AddrLo, AddrHi, ImplReg(RegisterIndex::AX), ImplMod(0b000), ImplRm(0b110), ImplD(true)]),
+        IxDef::new(  "mov",  vec![ C(bits!(static u8, Msb0; 1, 0, 1, 0, 0, 0, 0)), W, AddrLo, AddrHi, ImplRegBasedOnW(RegisterIndex::AX, RegisterIndex::AL), ImplD(true)]),
+        // accumulator to mem
+        IxDef::new(  "mov",  vec![ C(bits!(static u8, Msb0; 1, 0, 1, 0, 0, 0, 1)), W, AddrLo, AddrHi, ImplRegBasedOnW(RegisterIndex::AX, RegisterIndex::AL), ImplD(false)]),
     ]
 }
 
