@@ -54,7 +54,7 @@ pub struct Instruction {
 }
 
 #[repr(u8)]
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum RegisterIndex {
     // 8-bit
     AL,
@@ -91,7 +91,7 @@ impl fmt::Display for Operand {
             Operand::None => write!(f, ""),
             Operand::Address(effective_address) => match effective_address {
                 EffectiveAddress::Direct(val) => {
-                    write!(f, "{}", val)
+                    write!(f, "[{}]", val)
                 }
                 EffectiveAddress::Indirect { base, disp } => match disp {
                     Some(val) => {
@@ -138,8 +138,8 @@ impl fmt::Display for Operand {
                 RegisterIndex::DI => write!(f, "di"),
             },
             Operand::Immediate(immediate) => match immediate {
-                Immediate::Byte(val) => write!(f, "{}", val),
-                Immediate::Word(val) => write!(f, "{}", val),
+                Immediate::Byte(val) => write!(f, "byte {}", val),
+                Immediate::Word(val) => write!(f, "word {}", val),
             },
         }
     }
@@ -295,6 +295,10 @@ enum P<'a> {
     W,
     /// mod bits.
     MOD,
+    /// lo address bits
+    AddrLo,
+    /// hi address bits
+    AddrHi,
     /// reg bits.
     REG,
     /// rm bits.
@@ -305,6 +309,12 @@ enum P<'a> {
     DataIfW,
     /// Implied value of the D flag.
     ImplD(bool),
+    /// Implied value of the mod bits
+    ImplMod(u8),
+    /// Implied value of the rm bits
+    ImplRm(u8),
+    /// Implied value of the reg bits
+    ImplReg(RegisterIndex),
 }
 
 impl<'a> P<'a> {
@@ -319,6 +329,11 @@ impl<'a> P<'a> {
             P::DATA => 8,
             P::DataIfW => 8,
             P::ImplD(_) => 0,
+            P::AddrLo => 8,
+            P::AddrHi => 8,
+            P::ImplMod(_) => 0,
+            P::ImplRm(_) => 0,
+            P::ImplReg(_) => 0,
         }
     }
 }
@@ -347,6 +362,11 @@ impl<'a> IxDef<'a> {
         let mut rm_val: Option<u8> = None;
         let mut data_lo: Option<u8> = None;
         let mut data_hi: Option<u8> = None;
+        let mut addr_lo: Option<u8> = None;
+        let mut addr_hi: Option<u8> = None;
+        // parse operands
+        let mut reg_operand = None;
+        let second_operand;
 
         // Helper: read the next `length` bits.
         let mut read_bits = |length: usize| -> Option<&BitSlice<u8, Msb0>> {
@@ -421,21 +441,46 @@ impl<'a> IxDef<'a> {
                 P::ImplD(value) => {
                     d_val = Some(*value);
                 }
+                P::AddrLo => {
+                    let slice = read_bits(8)?;
+                    let mut val = 0u8;
+                    for bit in slice {
+                        val = (val << 1) | (*bit as u8);
+                    }
+                    addr_lo = Some(val);
+                }
+                P::AddrHi => {
+                    let slice = read_bits(8)?;
+                    let mut val = 0u8;
+                    for bit in slice {
+                        val = (val << 1) | (*bit as u8);
+                    }
+                    addr_hi = Some(val);
+                }
+                P::ImplMod(v) => {
+                    mod_val = Some(*v);
+                }
+                P::ImplRm(rm) => {
+                    rm_val = Some(*rm);
+                }
+                P::ImplReg(register_index) => {
+                    reg_operand = Some(Operand::Register(*register_index));
+                }
             }
         }
 
         let mut bytes_consumed = (bit_offset + 7) / 8; // round up
 
-        // parse operands
-        let reg_operand;
-        let second_operand;
         // parse reg opernad
-        if let Some(reg_val) = reg_val {
-            reg_operand = Operand::Register(decode_8086_register_index(reg_val, w_val.unwrap()));
+        let reg_operand = if reg_operand.is_none() {
+            if let Some(reg_val) = reg_val {
+                Operand::Register(decode_8086_register_index(reg_val, w_val.unwrap()))
+            } else {
+                operand_from_data(data_lo, data_hi)
+            }
         } else {
-            let operand = operand_from_data(data_lo, data_hi);
-            reg_operand = operand;
-        }
+            reg_operand.unwrap()
+        };
 
         // parse the second opernad
         match (rm_val, mod_val, w_val) {
@@ -484,12 +529,17 @@ fn operand_from_data(data_lo: Option<u8>, data_hi: Option<u8>) -> Operand {
 
 // https://github.com/cmuratori/computer_enhance/blob/c0b12bed53a004e1f6ca2995dc3fb73d793ac6b8/perfaware/sim86/sim86_instruction_table.inl#L58
 #[rustfmt::skip]
-pub fn ix_table() -> [IxDef<'static>; 3] {
+pub fn ix_table() -> [IxDef<'static>; 4] {
     use P::*;
     [
+        // reg/mem to/from reg
         IxDef::new( "mov", vec![C(bits!(static u8, Msb0; 1, 0, 0, 0, 1, 0)), D, W, MOD, REG, RM]),
+        // imm to  reg 
         IxDef::new( "mov", vec![C(bits!(static u8, Msb0; 1, 1, 0, 0, 0, 1, 1)), W, MOD, C(bits!(static u8, Msb0; 0, 0, 0)), RM, DATA, DataIfW, ImplD(false)]),
+        // imm to reg 
         IxDef::new(  "mov",  vec![ C(bits!(static u8, Msb0; 1, 0, 1, 1)), W, REG, DATA, DataIfW, ImplD(true)]),
+        // mem to accumulator
+        IxDef::new(  "mov",  vec![ C(bits!(static u8, Msb0; 1, 0, 1, 0, 0, 0, 0)), W, AddrLo, AddrHi, ImplReg(RegisterIndex::AX), ImplMod(0b000), ImplRm(0b110), ImplD(true)]),
     ]
 }
 
