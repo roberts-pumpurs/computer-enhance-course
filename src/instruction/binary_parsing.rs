@@ -426,31 +426,38 @@ impl<'a> IxDef<'a> {
 
         let mut bytes_consumed = (bit_offset + 7) / 8; // round up
 
-        let rm_operand = match (rm_val, mod_val, w_val) {
+        let mut first_operand = Operand::None;
+        let mut second_operand = Operand::None;
+        // todo conditionally assign the opeands depending on which params do we have avialable
+        match (rm_val, mod_val, w_val) {
             (Some(rm), Some(mod_val), Some(w)) => {
                 // Decode the r/m operand (which might consume extra bytes if there’s a displacement)
                 let (rm_operand, extra) =
                     decode_rm_operand(mod_val, rm, w, &bytes[bytes_consumed..])?;
                 bytes_consumed += extra;
-                rm_operand
+                second_operand = rm_operand;
+            }
+            (None, None, Some(w)) => {
+                // noop
             }
             _ => unimplemented!(),
         };
 
-        let reg_operand = match (data_lo, data_hi) {
+        match (data_lo, data_hi) {
             // first, see if we have an immediate as an operand
             (None, Some(_)) => unreachable!(),
-            (Some(byte), None) => Operand::Immediate(Immediate::Byte(byte)),
+            (Some(byte), None) => {
+                first_operand = Operand::Immediate(Immediate::Byte(byte));
+            }
             (Some(lo), Some(hi)) => {
                 let word = u16::from_le_bytes([lo, hi]);
-                Operand::Immediate(Immediate::Word(word))
+                first_operand = Operand::Immediate(Immediate::Word(word));
             }
             (None, None) => {
                 // otherwise, see if we can decode the operand from reg value
                 if let Some(reg_val) = reg_val {
-                    let reg_operand =
+                    first_operand =
                         Operand::Register(decode_8086_register_index(reg_val, w_val.unwrap()));
-                    reg_operand
                 } else {
                     unimplemented!()
                 }
@@ -459,11 +466,10 @@ impl<'a> IxDef<'a> {
 
         // d flag selects which operand is the destination register.
         let (first_operand, second_operand) = if d_val.unwrap() {
-            (reg_operand, rm_operand)
+            (first_operand, second_operand)
         } else {
-            (rm_operand, reg_operand)
+            (second_operand, first_operand)
         };
-        dbg!(&bytes_consumed);
         let inst = Instruction {
             size: bytes_consumed as u8,
             operation: self.name,
@@ -473,34 +479,14 @@ impl<'a> IxDef<'a> {
     }
 }
 
-// Example instruction table.
-pub fn ix_table() -> [IxDef<'static>; 2] {
+// https://github.com/cmuratori/computer_enhance/blob/c0b12bed53a004e1f6ca2995dc3fb73d793ac6b8/perfaware/sim86/sim86_instruction_table.inl#L58
+#[rustfmt::skip]
+pub fn ix_table() -> [IxDef<'static>; 3] {
     use P::*;
     [
-        IxDef::new(
-            "mov",
-            vec![
-                C(bits!(static u8, Msb0; 1, 0, 0, 0, 1, 0)),
-                D,
-                W,
-                MOD,
-                REG,
-                RM,
-            ],
-        ),
-        IxDef::new(
-            "mov",
-            vec![
-                C(bits!(static u8, Msb0; 1, 1, 0, 0, 0, 1, 1)),
-                W,
-                MOD,
-                C(bits!(static u8, Msb0; 0, 0, 0)),
-                RM,
-                DATA,
-                DataIfW,
-                ImplD(true),
-            ],
-        ),
+        IxDef::new( "mov", vec![C(bits!(static u8, Msb0; 1, 0, 0, 0, 1, 0)), D, W, MOD, REG, RM]),
+        IxDef::new( "mov", vec![C(bits!(static u8, Msb0; 1, 1, 0, 0, 0, 1, 1)), W, MOD, C(bits!(static u8, Msb0; 0, 0, 0)), RM, DATA, DataIfW, ImplD(false)]),
+        IxDef::new(  "mov",  vec![ C(bits!(static u8, Msb0; 1, 0, 1, 1)), W, REG, DATA, DataIfW, ImplD(true)]),
     ]
 }
 
