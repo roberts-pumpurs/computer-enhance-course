@@ -79,7 +79,6 @@ pub enum RegisterIndex {
 /// An operand can be one of several kinds.
 #[derive(Debug, PartialEq, Eq)]
 enum Operand {
-    None,
     Address(EffectiveAddress),
     Register(RegisterIndex),
     Immediate(Immediate),
@@ -88,7 +87,6 @@ enum Operand {
 impl fmt::Display for Operand {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Operand::None => write!(f, ""),
             Operand::Address(effective_address) => match effective_address {
                 EffectiveAddress::Direct(val) => {
                     write!(f, "[{}]", val)
@@ -317,10 +315,6 @@ enum P<'a> {
     DataIfW,
     /// Implied value of the D flag.
     ImplD(bool),
-    /// Implied value of the mod bits
-    ImplMod(u8),
-    /// Implied value of the rm bits
-    ImplRm(u8),
     /// Implied value of the reg bits
     ImplRegBasedOnW(RegisterIndex, RegisterIndex),
 }
@@ -339,8 +333,6 @@ impl<'a> P<'a> {
             P::AddrLo => 8,
             P::AddrHi => 8,
             P::ImplD(_) => 0,
-            P::ImplMod(_) => 0,
-            P::ImplRm(_) => 0,
             P::ImplRegBasedOnW(_, _) => 0,
         }
     }
@@ -465,12 +457,6 @@ impl<'a> IxDef<'a> {
                     }
                     addr_hi = Some(val);
                 }
-                P::ImplMod(v) => {
-                    mod_val = Some(*v);
-                }
-                P::ImplRm(rm) => {
-                    rm_val = Some(*rm);
-                }
                 P::ImplRegBasedOnW(if_w, if_not_w) => {
                     if w_val.unwrap() {
                         reg_operand = Some(Operand::Register(*if_w));
@@ -491,7 +477,7 @@ impl<'a> IxDef<'a> {
                 match data_lo {
                     Some(data_lo) => operand_from_data(data_lo, data_hi),
                     None => match (addr_lo, addr_hi) {
-                        (None, None) => todo!(),
+                        (None, None) => unreachable!(),
                         (Some(lo), Some(hi)) => {
                             let addr = u16::from_le_bytes([lo, hi]);
                             Operand::Address(EffectiveAddress::Direct(addr))
@@ -547,10 +533,10 @@ impl<'a> IxDef<'a> {
 }
 
 fn operand_from_data(data_lo: u8, data_hi: Option<u8>) -> Operand {
-    match (data_hi) {
+    match data_hi {
         // first, see if we have an immediate as an operand
-        (None) => Operand::Immediate(Immediate::Byte(data_lo)),
-        (Some(hi)) => {
+        None => Operand::Immediate(Immediate::Byte(data_lo)),
+        Some(hi) => {
             let word = u16::from_le_bytes([data_lo, hi]);
             Operand::Immediate(Immediate::Word(word))
         }
