@@ -591,14 +591,14 @@ fn operand_from_data(data_lo: u8, data_hi: Option<u8>) -> Operand {
 
 // https://github.com/cmuratori/computer_enhance/blob/c0b12bed53a004e1f6ca2995dc3fb73d793ac6b8/perfaware/sim86/sim86_instruction_table.inl#L58
 #[rustfmt::skip]
-pub fn ix_table() -> [IxDef<'static>; 2] {
+pub fn ix_table() -> [IxDef<'static>; 3] {
     use P::*;
     [
         // reg/mem to/from reg
         IxDef::new("mov", vec![C(bits!(static u8, Msb0; 1, 0, 0, 0, 1, 0)), D, W, Mod, Reg, Rm, OptDispLo, OptDispHi, ParseReg, ParseSecondOperand]),
         // imm to reg 
-        // IxDef::new("mov", vec![C(bits!(static u8, Msb0; 1, 1, 0, 0, 0, 1, 1)), W, Mod, C(bits!(static u8, Msb0; 0, 0, 0)), Rm, OptDispLoIfMod, OptDispHiIfW, Data, DataIfW, ImplD(false), ParseReg, ParseSecondOperand]),
-        // // imm to reg 
+        IxDef::new("mov", vec![C(bits!(static u8, Msb0; 1, 1, 0, 0, 0, 1, 1)), W, Mod, C(bits!(static u8, Msb0; 0, 0, 0)), Rm, OptDispLo, OptDispHi, Data, DataIfW, ImplD(false), ParseReg, ParseSecondOperand]),
+        // imm to reg 
         IxDef::new("mov",  vec![C(bits!(static u8, Msb0; 1, 0, 1, 1)), W, Reg, Data, DataIfW, ImplD(true), ParseReg, ParseSecondOperand]),
         // // mem to accumulator
         // IxDef::new("mov",  vec![ C(bits!(static u8, Msb0; 1, 0, 1, 0, 0, 0, 0)), W, AddrLo, AddrHi, ImplRegBasedOnW(RegisterIndex::AX, RegisterIndex::AL), ImplD(true)]),
@@ -666,7 +666,7 @@ mod table_tests {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs::File, io::Write as _};
+    use std::{fmt::Formatter, fs::File, io::Write as _};
 
     use itertools::Itertools as _;
     use pretty_assertions::{assert_eq, assert_str_eq};
@@ -747,9 +747,25 @@ mod tests {
         // Invoke nasm
         cmd!(sh, "nasm {asm_path} -o {bin_path}").run().unwrap();
 
+        struct V(Vec<u8>);
+
+        impl fmt::Binary for V {
+            fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+                let vec = &self.0;
+                for (count, n) in vec.iter().enumerate() {
+                    if count != 0 {
+                        write!(f, " ")?;
+                    }
+                    write!(f, "{:b}", n)?;
+                }
+                Ok(())
+            }
+        }
+
         // Read back the generated machine code
-        let machine_code = std::fs::read(&bin_path).unwrap();
-        machine_code
+        let machine_code = V(std::fs::read(&bin_path).unwrap());
+        println!("{machine_code:#0b}");
+        machine_code.0
     }
 
     #[test]
@@ -796,11 +812,23 @@ mov al, [bx + si + 4999]
         assert_eq!(format!("{}", decoded.ixs[0]), "mov al, [bx + si + 4999]");
     }
 
-    // #[test]
-    // fn test_listing_40() {
-    //     let test = "listing_0040_challenge_movs";
-    //     read_and_test(test);
-    // }
+    #[test]
+    fn test_manual_3() {
+        let asm_snippet = r#"
+bits 16
+mov [bp + di], byte 7
+"#;
+        let machine_code = assemble_16_bit(asm_snippet);
+        let decoded = decode(&machine_code);
+        assert_eq!(decoded.ixs.len(), 1);
+        assert_eq!(format!("{}", decoded.ixs[0]), "mov [bp + di], byte 7");
+    }
+
+    #[test]
+    fn test_listing_40() {
+        let test = "listing_0040_challenge_movs";
+        read_and_test(test);
+    }
 
     //     #[test]
     //     #[ignore = "jumps and labels ar PITA to generate but it works (manually validated, trust me bro)"]
