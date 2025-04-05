@@ -591,7 +591,7 @@ fn operand_from_data(data_lo: u8, data_hi: Option<u8>) -> Operand {
 
 // https://github.com/cmuratori/computer_enhance/blob/c0b12bed53a004e1f6ca2995dc3fb73d793ac6b8/perfaware/sim86/sim86_instruction_table.inl#L58
 #[rustfmt::skip]
-pub fn ix_table() -> [IxDef<'static>; 3] {
+pub fn ix_table() -> [IxDef<'static>; 5] {
     use P::*;
     [
         // reg/mem to/from reg
@@ -600,10 +600,10 @@ pub fn ix_table() -> [IxDef<'static>; 3] {
         IxDef::new("mov", vec![C(bits!(static u8, Msb0; 1, 1, 0, 0, 0, 1, 1)), W, Mod, C(bits!(static u8, Msb0; 0, 0, 0)), Rm, OptDispLo, OptDispHi, Data, DataIfW, ImplD(false), ParseReg, ParseSecondOperand]),
         // imm to reg 
         IxDef::new("mov",  vec![C(bits!(static u8, Msb0; 1, 0, 1, 1)), W, Reg, Data, DataIfW, ImplD(true), ParseReg, ParseSecondOperand]),
-        // // mem to accumulator
-        // IxDef::new("mov",  vec![ C(bits!(static u8, Msb0; 1, 0, 1, 0, 0, 0, 0)), W, AddrLo, AddrHi, ImplRegBasedOnW(RegisterIndex::AX, RegisterIndex::AL), ImplD(true)]),
-        // // accumulator to mem
-        // IxDef::new("mov",  vec![ C(bits!(static u8, Msb0; 1, 0, 1, 0, 0, 0, 1)), W, AddrLo, AddrHi, ImplRegBasedOnW(RegisterIndex::AX, RegisterIndex::AL), ImplD(false)]),
+        // mem to accumulator
+        IxDef::new("mov",  vec![ C(bits!(static u8, Msb0; 1, 0, 1, 0, 0, 0, 0)), W, AddrLo, AddrHi, ImplRegBasedOnW(RegisterIndex::AX, RegisterIndex::AL), ImplD(true),  ParseReg, ParseSecondOperand]),
+        // accumulator to mem
+        IxDef::new("mov",  vec![ C(bits!(static u8, Msb0; 1, 0, 1, 0, 0, 0, 1)), W, AddrLo, AddrHi, ImplRegBasedOnW(RegisterIndex::AX, RegisterIndex::AL), ImplD(false), ParseReg, ParseSecondOperand]),
     ]
 }
 
