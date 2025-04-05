@@ -284,14 +284,19 @@ fn decode_rm_operand(
 }
 
 /// A parsable item in the instruction format.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum P<'a> {
     /// Binary constant pattern.
     C(&'a BitSlice<u8, Msb0>),
     /// The data (direction) flag.
+    /// Instruction destination is specified in REG field
     D,
     /// The wide flag.
+    /// Instruction operates on word data
     W,
+    /// Sign flag
+    /// Sign extend 8-bit immediate data to 16 bits if W=1
+    S,
     /// mod bits.
     Mod,
     /// lo address bits
@@ -306,6 +311,8 @@ enum P<'a> {
     Data,
     /// Expect a data byte if W == 1.
     DataIfW,
+    /// Expect a data byte if S == 1.
+    DataIfS,
     OptDispLo,
     OptDispHi,
     /// Implied value of the D flag.
@@ -324,11 +331,13 @@ impl<'a> P<'a> {
             P::C(value) => value.len() as u8,
             P::D => 1,
             P::W => 1,
+            P::S => 1,
             P::Mod => 3,
             P::Reg => 3,
             P::Rm => 2,
             P::Data => 8,
             P::DataIfW => 8,
+            P::DataIfS => 8,
             P::AddrLo => 8,
             P::AddrHi => 8,
             P::ImplD(_) => 0,
@@ -342,7 +351,7 @@ impl<'a> P<'a> {
 }
 
 /// Instruction definition.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct IxDef<'a> {
     name: &'static str,
     items: Vec<P<'a>>,
@@ -352,6 +361,7 @@ pub struct IxDef<'a> {
 pub struct ParseContext {
     d_val: Option<bool>,
     w_val: Option<bool>,
+    s_val: Option<bool>,
     mod_val: Option<u8>,
     reg_val: Option<u8>,
     rm_val: Option<u8>,
@@ -548,6 +558,21 @@ impl<'a> IxDef<'a> {
                         _ => unimplemented!(),
                     };
                 }
+                P::S => {
+                    let slice = read_bits(1);
+                    ctx.s_val = Some(slice[0]);
+                }
+                P::DataIfS => {
+                    if ctx.w_val.unwrap() {
+                        if ctx.s_val.unwrap() {
+                            ctx.data_hi = Some(0);
+                        } else {
+                            let slice = read_bits(8);
+                            let val = slice_to_val(slice);
+                            ctx.data_hi = Some(val);
+                        }
+                    }
+                }
             }
         }
 
@@ -591,8 +616,21 @@ fn operand_from_data(data_lo: u8, data_hi: Option<u8>) -> Operand {
 
 // https://github.com/cmuratori/computer_enhance/blob/c0b12bed53a004e1f6ca2995dc3fb73d793ac6b8/perfaware/sim86/sim86_instruction_table.inl#L58
 #[rustfmt::skip]
-pub fn ix_table() -> [IxDef<'static>; 5] {
+pub fn ix_table() -> [IxDef<'static>; 14] {
     use P::*;
+    let arithm = |name: &'static str, idx: usize, overrides: &[(usize, P<'static>)]| {
+        let base_arithm_defs = [
+            IxDef::new("add",  vec![C(bits!(static u8, Msb0; 0,0,0,0,0,0)), D, W, Mod, Reg, Rm, OptDispLo, OptDispHi, ParseReg, ParseSecondOperand]),
+            IxDef::new("add",  vec![C(bits!(static u8, Msb0; 1,0,0,0,0,0)), S, W, Mod, C(bits!(static u8, Msb0; 0, 0, 0)), Rm, OptDispLo, OptDispHi, Data, DataIfS, ImplD(false), ParseReg, ParseSecondOperand]),
+            IxDef::new("add",  vec![C(bits!(static u8, Msb0; 0,0,0,0,0,1,0)), W, Data, DataIfW, ImplRegBasedOnW(RegisterIndex::AX, RegisterIndex::AL), ImplD(true),  ParseReg, ParseSecondOperand]),
+        ];
+        let mut def = base_arithm_defs[idx].clone();
+        for (idx, ov) in overrides.iter() {
+            def.items[*idx] = ov.clone();
+        }
+        def.name = name;
+        def
+    };
     [
         // reg/mem to/from reg
         IxDef::new("mov", vec![C(bits!(static u8, Msb0; 1, 0, 0, 0, 1, 0)), D, W, Mod, Reg, Rm, OptDispLo, OptDispHi, ParseReg, ParseSecondOperand]),
@@ -601,9 +639,21 @@ pub fn ix_table() -> [IxDef<'static>; 5] {
         // imm to reg 
         IxDef::new("mov",  vec![C(bits!(static u8, Msb0; 1, 0, 1, 1)), W, Reg, Data, DataIfW, ImplD(true), ParseReg, ParseSecondOperand]),
         // mem to accumulator
-        IxDef::new("mov",  vec![ C(bits!(static u8, Msb0; 1, 0, 1, 0, 0, 0, 0)), W, AddrLo, AddrHi, ImplRegBasedOnW(RegisterIndex::AX, RegisterIndex::AL), ImplD(true),  ParseReg, ParseSecondOperand]),
+        IxDef::new("mov",  vec![C(bits!(static u8, Msb0; 1, 0, 1, 0, 0, 0, 0)), W, AddrLo, AddrHi, ImplRegBasedOnW(RegisterIndex::AX, RegisterIndex::AL), ImplD(true),  ParseReg, ParseSecondOperand]),
         // accumulator to mem
-        IxDef::new("mov",  vec![ C(bits!(static u8, Msb0; 1, 0, 1, 0, 0, 0, 1)), W, AddrLo, AddrHi, ImplRegBasedOnW(RegisterIndex::AX, RegisterIndex::AL), ImplD(false), ParseReg, ParseSecondOperand]),
+        IxDef::new("mov",  vec![C(bits!(static u8, Msb0; 1, 0, 1, 0, 0, 0, 1)), W, AddrLo, AddrHi, ImplRegBasedOnW(RegisterIndex::AX, RegisterIndex::AL), ImplD(false), ParseReg, ParseSecondOperand]),
+        // add
+        arithm("add", 0, &[]),
+        arithm("add", 1, &[]),
+        arithm("add", 2, &[]),
+        // sub
+        arithm("sub", 0, &[(0, C(bits!(static u8, Msb0; 0,0,1,0,1,0)))]),
+        arithm("sub", 1, &[(4, C(bits!(static u8, Msb0; 1,0,1)))]),
+        arithm("sub", 2, &[(0, C(bits!(static u8, Msb0; 0,0,1,0,1,1,0)))]),
+        // cmp
+        arithm("cmp", 0, &[(0, C(bits!(static u8, Msb0; 0,0,1,1,1,0)))]),
+        arithm("cmp", 1, &[(4, C(bits!(static u8, Msb0; 1,1,1)))]),
+        arithm("cmp", 2, &[(0, C(bits!(static u8, Msb0; 0,0,1,1,1,1,0)))]),
     ]
 }
 
@@ -756,7 +806,7 @@ mod tests {
                     if count != 0 {
                         write!(f, " ")?;
                     }
-                    write!(f, "{:b}", n)?;
+                    write!(f, "{:08b}", n)?;
                 }
                 Ok(())
             }
@@ -825,17 +875,29 @@ mov [bp + di], byte 7
     }
 
     #[test]
+    fn test_manual_4() {
+        let asm_snippet = r#"
+bits 16
+add bx, [bx + si]
+"#;
+        let machine_code = assemble_16_bit(asm_snippet);
+        let decoded = decode(&machine_code);
+        assert_eq!(decoded.ixs.len(), 1);
+        assert_eq!(format!("{}", decoded.ixs[0]), "add bx, [bx + si]");
+    }
+
+    #[test]
     fn test_listing_40() {
         let test = "listing_0040_challenge_movs";
         read_and_test(test);
     }
 
-    //     #[test]
-    //     #[ignore = "jumps and labels ar PITA to generate but it works (manually validated, trust me bro)"]
-    //     fn test_listing_41() {
-    //         let test = "listing_0041_add_sub_cmp_jnz";
-    //         read_and_test(test);
-    //     }
+    #[test]
+    // #[ignore = "jumps and labels ar PITA to generate but it works (manually validated, trust me bro)"]
+    fn test_listing_41() {
+        let test = "listing_0041_add_sub_cmp_jnz";
+        read_and_test(test);
+    }
 
     //     #[test]
     //     fn test_get_expected_register() {
