@@ -11,16 +11,19 @@ pub fn decode(mut bytes_to_pass: &[u8]) -> InstructionSet {
     let mut ixs = vec![];
     let ix_table = ix_table();
     'top: while bytes_to_pass.len() > 0 {
+        let mut ctx = ParseContext::default();
         for ix_def in ix_table.iter() {
-            let res = ix_def.from_bytes(bytes_to_pass);
+            ctx = ParseContext::default();
+            let res = ix_def.from_bytes(&mut ctx, bytes_to_pass);
             if let Some((ix, new_bytes)) = res {
-                println!("{ix}");
+                tracing::info!("{ix}");
                 ixs.push(ix);
                 bytes_to_pass = new_bytes;
                 continue 'top;
             }
         }
 
+        tracing::error!(?ctx);
         panic!("invalid binary ix");
     }
     InstructionSet { ixs }
@@ -77,7 +80,7 @@ pub enum RegisterIndex {
 }
 
 /// An operand can be one of several kinds.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Operand {
     Address(EffectiveAddress),
     Register(RegisterIndex),
@@ -152,14 +155,14 @@ impl fmt::Display for Operand {
 }
 
 /// Immediate values may be 8 or 16 bits.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Immediate {
     Byte(u8),
     Word(u16),
 }
 
 /// For memory operands, we support both direct addressing and register indirect addressing with optional displacement.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum EffectiveAddress {
     Direct(u16),
     Indirect {
@@ -169,7 +172,7 @@ pub enum EffectiveAddress {
 }
 
 /// The possible base register combinations used in 8086 effective address computation.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum EffectiveAddressBase {
     BX_SI,
     BX_DI,
@@ -281,6 +284,7 @@ fn decode_rm_operand(
 }
 
 /// A parsable item in the instruction format.
+#[derive(Debug)]
 enum P<'a> {
     /// Binary constant pattern.
     C(&'a BitSlice<u8, Msb0>),
@@ -302,8 +306,8 @@ enum P<'a> {
     Data,
     /// Expect a data byte if W == 1.
     DataIfW,
-    OptDispLoIfMod,
-    OptDispHiIfW,
+    OptDispLo,
+    OptDispHi,
     /// Implied value of the D flag.
     ImplD(bool),
     /// Implied value of the reg bits
@@ -329,8 +333,8 @@ impl<'a> P<'a> {
             P::AddrHi => 8,
             P::ImplD(_) => 0,
             P::ImplRegBasedOnW(_, _) => 0,
-            P::OptDispLoIfMod => 8,
-            P::OptDispHiIfW => 8,
+            P::OptDispLo => 8,
+            P::OptDispHi => 8,
             P::ParseReg => 0,
             P::ParseSecondOperand => 0,
         }
@@ -338,9 +342,27 @@ impl<'a> P<'a> {
 }
 
 /// Instruction definition.
+#[derive(Debug)]
 pub struct IxDef<'a> {
     name: &'static str,
     items: Vec<P<'a>>,
+}
+
+#[derive(Debug, Default)]
+pub struct ParseContext {
+    d_val: Option<bool>,
+    w_val: Option<bool>,
+    mod_val: Option<u8>,
+    reg_val: Option<u8>,
+    rm_val: Option<u8>,
+    data_lo: Option<u8>,
+    data_hi: Option<u8>,
+    disp_lo: Option<u8>,
+    disp_hi: Option<u8>,
+    addr_lo: Option<u8>,
+    addr_hi: Option<u8>,
+    reg_operand: Option<Operand>,
+    second_operand: Option<Operand>,
 }
 
 impl<'a> IxDef<'a> {
@@ -349,129 +371,143 @@ impl<'a> IxDef<'a> {
     }
 
     /// Returns the decoded instruction and the subslice of input bytes where to continue parsing.
-    pub fn from_bytes<'b, 'c>(&'c self, bytes: &'b [u8]) -> Option<(Instruction, &'b [u8])> {
+    pub fn from_bytes<'b, 'c>(
+        &'c self,
+        ctx: &mut ParseContext,
+        bytes: &'b [u8],
+    ) -> Option<(Instruction, &'b [u8])> {
         let bits = bytes.view_bits::<Msb0>();
         let mut bit_offset = 0usize;
 
-        // Local fields.
-        let mut d_val: Option<bool> = None;
-        let mut w_val: Option<bool> = None;
-        let mut mod_val: Option<u8> = None;
-        let mut reg_val: Option<u8> = None;
-        let mut rm_val: Option<u8> = None;
-        let mut data_lo: Option<u8> = None;
-        let mut data_hi: Option<u8> = None;
-        let mut disp_lo: Option<u8> = None;
-        let mut disp_hi: Option<u8> = None;
-        let mut addr_lo: Option<u8> = None;
-        let mut addr_hi: Option<u8> = None;
-        // parse operands
-        let mut reg_operand = None;
-        let mut second_operand = None;
-
         // Helper: read the next `length` bits.
-        let mut read_bits = |length: usize| -> Option<&BitSlice<u8, Msb0>> {
+        let mut read_bits = |length: usize| -> &BitSlice<u8, Msb0> {
+            dbg!(length);
             if bit_offset + length > bits.len() {
-                return None;
+                panic!("trying to read too many bits");
             }
             let slice = &bits[bit_offset..bit_offset + length];
             bit_offset += length;
-            Some(slice)
+            slice
         };
 
         for item in &self.items {
+            tracing::debug!(?item);
             match item {
                 // Compare the next bits to the expected pattern.
                 P::C(pattern) => {
                     let len = pattern.len();
-                    let candidate = read_bits(len)?;
+                    let candidate = read_bits(len);
                     if !candidate.eq(pattern) {
+                        tracing::debug!("invalid pattern");
                         return None;
                     }
                 }
                 P::D => {
-                    let slice = read_bits(1)?;
-                    d_val = Some(slice[0]);
+                    let slice = read_bits(1);
+                    ctx.d_val = Some(slice[0]);
                 }
                 P::W => {
-                    let slice = read_bits(1)?;
-                    w_val = Some(slice[0]);
+                    let slice = read_bits(1);
+                    ctx.w_val = Some(slice[0]);
                 }
                 P::Mod => {
-                    let slice = read_bits(2)?;
+                    let slice = read_bits(2);
                     let val = slice_to_val(slice);
-                    mod_val = Some(val);
+                    ctx.mod_val = Some(val);
                 }
                 P::Reg => {
-                    let slice = read_bits(3)?;
+                    let slice = read_bits(3);
                     let val = slice_to_val(slice);
-                    reg_val = Some(val);
+                    ctx.reg_val = Some(val);
                 }
                 P::Rm => {
-                    let slice = read_bits(3)?;
+                    let slice = read_bits(3);
                     let val = slice_to_val(slice);
-                    rm_val = Some(val);
+                    ctx.rm_val = Some(val);
                 }
                 P::Data => {
-                    let slice = read_bits(8)?;
+                    let slice = read_bits(8);
                     let val = slice_to_val(slice);
-                    data_lo = Some(val);
+                    ctx.data_lo = Some(val);
                 }
                 P::DataIfW => {
-                    if w_val == Some(true) {
-                        let slice = read_bits(8)?;
+                    if ctx.w_val == Some(true) {
+                        let slice = read_bits(8);
                         let val = slice_to_val(slice);
-                        data_hi = Some(val);
+                        ctx.data_hi = Some(val);
                     }
                 }
                 P::ImplD(value) => {
-                    d_val = Some(*value);
+                    ctx.d_val = Some(*value);
                 }
                 P::AddrLo => {
-                    let slice = read_bits(8)?;
+                    let slice = read_bits(8);
                     let val = slice_to_val(slice);
-                    addr_lo = Some(val);
+                    ctx.addr_lo = Some(val);
                 }
                 P::AddrHi => {
-                    let slice = read_bits(8)?;
+                    let slice = read_bits(8);
                     let val = slice_to_val(slice);
-                    addr_hi = Some(val);
+                    ctx.addr_hi = Some(val);
                 }
                 P::ImplRegBasedOnW(if_w, if_not_w) => {
-                    if w_val.unwrap() {
-                        reg_operand = Some(Operand::Register(*if_w));
+                    if ctx.w_val.unwrap() {
+                        ctx.reg_operand = Some(Operand::Register(*if_w));
                     } else {
-                        reg_operand = Some(Operand::Register(*if_not_w));
+                        ctx.reg_operand = Some(Operand::Register(*if_not_w));
                     }
                 }
-                P::OptDispLoIfMod => {
-                    if mod_val.unwrap() == 0b00
-                        || mod_val.unwrap() == 0b01
-                        || mod_val.unwrap() == 0b10
-                    {
-                        let slice = read_bits(8)?;
-                        let val = slice_to_val(slice);
-                        disp_lo = Some(val);
+                P::OptDispLo => {
+                    match (ctx.mod_val.unwrap(), ctx.rm_val.unwrap()) {
+                        // mod=00 + rm=110 => read first displacement byte
+                        (0b00, 0b110) => {
+                            let slice = read_bits(8);
+                            ctx.disp_lo = Some(slice_to_val(slice));
+                        }
+                        // mod=01 => read one byte displacement
+                        (0b01, _) => {
+                            let slice = read_bits(8);
+                            ctx.disp_lo = Some(slice_to_val(slice));
+                        }
+                        // mod=10 => read first byte of a 16-bit displacement
+                        (0b10, _) => {
+                            let slice = read_bits(8);
+                            ctx.disp_lo = Some(slice_to_val(slice));
+                        }
+                        _ => {
+                            // No displacement
+                        }
                     }
                 }
-                P::OptDispHiIfW => {
-                    if (mod_val.unwrap() == 0b00 && rm_val.unwrap() == 0b110)
-                        || mod_val.unwrap() == 0b10
-                    {
-                        let slice = read_bits(8)?;
-                        let val = slice_to_val(slice);
-                        disp_hi = Some(val);
+                P::OptDispHi => {
+                    match (ctx.mod_val.unwrap(), ctx.rm_val.unwrap()) {
+                        // mod=00 + rm=110 => second byte of the 16-bit address
+                        (0b00, 0b110) => {
+                            let slice = read_bits(8);
+                            ctx.disp_hi = Some(slice_to_val(slice));
+                        }
+                        // mod=10 => second byte of the 16-bit displacement
+                        (0b10, _) => {
+                            let slice = read_bits(8);
+                            ctx.disp_hi = Some(slice_to_val(slice));
+                        }
+                        _ => {
+                            // No second displacement byte
+                        }
                     }
                 }
                 P::ParseReg => {
                     // parse reg opernad
-                    let tmp_reg_operand = if reg_operand.is_none() {
-                        if let Some(reg_val) = reg_val {
-                            Operand::Register(decode_8086_register_index(reg_val, w_val.unwrap()))
+                    let tmp_reg_operand = if ctx.reg_operand.is_none() {
+                        if let Some(reg_val) = ctx.reg_val {
+                            Operand::Register(decode_8086_register_index(
+                                reg_val,
+                                ctx.w_val.unwrap(),
+                            ))
                         } else {
-                            match data_lo {
-                                Some(data_lo) => operand_from_data(data_lo, data_hi),
-                                None => match (addr_lo, addr_hi) {
+                            match ctx.data_lo {
+                                Some(data_lo) => operand_from_data(data_lo, ctx.data_hi),
+                                None => match (ctx.addr_lo, ctx.addr_hi) {
                                     (None, None) => unreachable!(),
                                     (Some(lo), Some(hi)) => {
                                         let addr = u16::from_le_bytes([lo, hi]);
@@ -482,27 +518,28 @@ impl<'a> IxDef<'a> {
                             }
                         }
                     } else {
-                        reg_operand.unwrap()
+                        ctx.reg_operand.unwrap()
                     };
-                    reg_operand = Some(tmp_reg_operand);
+                    ctx.reg_operand = Some(tmp_reg_operand);
                 }
                 P::ParseSecondOperand => {
                     // parse the second opernad
-                    match (rm_val, mod_val, w_val) {
+                    match (ctx.rm_val, ctx.mod_val, ctx.w_val) {
                         (Some(rm), Some(mod_val), Some(w)) => {
                             // Decode the r/m operand (which might consume extra bytes if there’s a displacement)
-                            let rm_operand = decode_rm_operand(mod_val, rm, w, disp_lo, disp_hi);
-                            second_operand = Some(rm_operand);
+                            let rm_operand =
+                                decode_rm_operand(mod_val, rm, w, ctx.disp_lo, ctx.disp_hi);
+                            ctx.second_operand = Some(rm_operand);
                         }
-                        (None, None, Some(_w)) => match data_lo {
+                        (None, None, Some(_w)) => match ctx.data_lo {
                             Some(data_lo) => {
-                                second_operand = Some(operand_from_data(data_lo, data_hi));
+                                ctx.second_operand = Some(operand_from_data(data_lo, ctx.data_hi));
                             }
-                            None => match (addr_lo, addr_hi) {
+                            None => match (ctx.addr_lo, ctx.addr_hi) {
                                 (None, None) => todo!(),
                                 (Some(lo), Some(hi)) => {
                                     let addr = u16::from_le_bytes([lo, hi]);
-                                    second_operand =
+                                    ctx.second_operand =
                                         Some(Operand::Address(EffectiveAddress::Direct(addr)));
                                 }
                                 _ => unreachable!(),
@@ -514,15 +551,15 @@ impl<'a> IxDef<'a> {
             }
         }
 
-        let mut bytes_consumed = (bit_offset + 7) / 8; // round up
+        let bytes_consumed = (bit_offset + 7) / 8; // round up
 
         // d flag selects which operand is the destination register.
         // if d -- ix source is REG field
         // if not d -- destination is the REG field
-        let (first_operand, second_operand) = if d_val.unwrap() {
-            (reg_operand.unwrap(), second_operand.unwrap())
+        let (first_operand, second_operand) = if ctx.d_val.unwrap() {
+            (ctx.reg_operand.unwrap(), ctx.second_operand.unwrap())
         } else {
-            (second_operand.unwrap(), reg_operand.unwrap())
+            (ctx.second_operand.unwrap(), ctx.reg_operand.unwrap())
         };
         let inst = Instruction {
             size: bytes_consumed as u8,
@@ -554,15 +591,15 @@ fn operand_from_data(data_lo: u8, data_hi: Option<u8>) -> Operand {
 
 // https://github.com/cmuratori/computer_enhance/blob/c0b12bed53a004e1f6ca2995dc3fb73d793ac6b8/perfaware/sim86/sim86_instruction_table.inl#L58
 #[rustfmt::skip]
-pub fn ix_table() -> [IxDef<'static>; 3] {
+pub fn ix_table() -> [IxDef<'static>; 2] {
     use P::*;
     [
         // reg/mem to/from reg
-        IxDef::new("mov", vec![C(bits!(static u8, Msb0; 1, 0, 0, 0, 1, 0)), D, W, Mod, Reg, Rm, OptDispLoIfMod, OptDispHiIfW, ParseReg, ParseSecondOperand]),
+        IxDef::new("mov", vec![C(bits!(static u8, Msb0; 1, 0, 0, 0, 1, 0)), D, W, Mod, Reg, Rm, OptDispLo, OptDispHi, ParseReg, ParseSecondOperand]),
         // imm to reg 
-        IxDef::new("mov", vec![C(bits!(static u8, Msb0; 1, 1, 0, 0, 0, 1, 1)), W, Mod, C(bits!(static u8, Msb0; 0, 0, 0)), Rm, OptDispLoIfMod, OptDispHiIfW, Data, DataIfW, ImplD(false), ParseReg, ParseSecondOperand]),
+        // IxDef::new("mov", vec![C(bits!(static u8, Msb0; 1, 1, 0, 0, 0, 1, 1)), W, Mod, C(bits!(static u8, Msb0; 0, 0, 0)), Rm, OptDispLoIfMod, OptDispHiIfW, Data, DataIfW, ImplD(false), ParseReg, ParseSecondOperand]),
         // // imm to reg 
-        IxDef::new("mov",  vec![C(bits!(static u8, Msb0; 1, 0, 1, 1)), W, Reg, Data, DataIfW, ImplD(true),  ParseReg, ParseSecondOperand]),
+        IxDef::new("mov",  vec![C(bits!(static u8, Msb0; 1, 0, 1, 1)), W, Reg, Data, DataIfW, ImplD(true), ParseReg, ParseSecondOperand]),
         // // mem to accumulator
         // IxDef::new("mov",  vec![ C(bits!(static u8, Msb0; 1, 0, 1, 0, 0, 0, 0)), W, AddrLo, AddrHi, ImplRegBasedOnW(RegisterIndex::AX, RegisterIndex::AL), ImplD(true)]),
         // // accumulator to mem
@@ -694,6 +731,27 @@ mod tests {
         assert_eq!(content_binary, expected_content);
     }
 
+    /// Assemble a bits-16 snippet into raw machine code via NASM.
+    fn assemble_16_bit(asm_snippet: &str) -> Vec<u8> {
+        let sh = xshell::Shell::new().unwrap();
+        let dir = tempdir::TempDir::new("").unwrap();
+        let asm_path = dir.path().join("test.asm");
+        let bin_path = dir.path().join("test.bin");
+
+        // Write code to a temporary .asm file
+        {
+            let mut file = File::create(&asm_path).unwrap();
+            file.write_all(asm_snippet.as_bytes()).unwrap();
+        }
+
+        // Invoke nasm
+        cmd!(sh, "nasm {asm_path} -o {bin_path}").run().unwrap();
+
+        // Read back the generated machine code
+        let machine_code = std::fs::read(&bin_path).unwrap();
+        machine_code
+    }
+
     #[test]
     fn test_listing_37() {
         let test = "listing_0037_single_register_mov";
@@ -710,6 +768,32 @@ mod tests {
     fn test_listing_39() {
         let test = "listing_0039_more_movs";
         read_and_test(test);
+    }
+
+    #[test]
+    fn test_manual_1() {
+        let asm_snippet = r#"
+bits 16
+mov al, [bx + si]
+mov bx, [bp + di]
+"#;
+        let machine_code = assemble_16_bit(asm_snippet);
+        let decoded = decode(&machine_code);
+        assert_eq!(decoded.ixs.len(), 2);
+        assert_eq!(format!("{}", decoded.ixs[0]), "mov al, [bx + si]");
+        assert_eq!(format!("{}", decoded.ixs[1]), "mov bx, [bp + di]");
+    }
+
+    #[test]
+    fn test_manual_2() {
+        let asm_snippet = r#"
+bits 16
+mov al, [bx + si + 4999]
+"#;
+        let machine_code = assemble_16_bit(asm_snippet);
+        let decoded = decode(&machine_code);
+        assert_eq!(decoded.ixs.len(), 1);
+        assert_eq!(format!("{}", decoded.ixs[0]), "mov al, [bx + si + 4999]");
     }
 
     // #[test]
