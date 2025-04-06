@@ -65,9 +65,24 @@ pub struct Instruction {
     operands: [Option<Operand>; 2],
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Register {
+    Regular(Regular),
+    Segment(Segment),
+}
+
 #[repr(u8)]
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum RegisterIndex {
+pub enum Segment {
+    ES = 0b00,
+    CS = 0b01,
+    SS = 0b10,
+    DS = 0b11,
+}
+
+#[repr(u8)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum Regular {
     // 8-bit
     AL,
     CL,
@@ -92,7 +107,7 @@ pub enum RegisterIndex {
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Operand {
     Address(EffectiveAddress),
-    Register(RegisterIndex),
+    Register(Register),
     Immediate(Immediate),
 }
 
@@ -137,23 +152,31 @@ impl fmt::Display for Operand {
                     },
                 },
             },
-            Operand::Register(register_index) => match register_index {
-                RegisterIndex::AL => write!(f, "al"),
-                RegisterIndex::CL => write!(f, "cl"),
-                RegisterIndex::DL => write!(f, "dl"),
-                RegisterIndex::BL => write!(f, "bl"),
-                RegisterIndex::AH => write!(f, "ah"),
-                RegisterIndex::CH => write!(f, "ch"),
-                RegisterIndex::DH => write!(f, "dh"),
-                RegisterIndex::BH => write!(f, "bh"),
-                RegisterIndex::AX => write!(f, "ax"),
-                RegisterIndex::CX => write!(f, "cx"),
-                RegisterIndex::DX => write!(f, "dx"),
-                RegisterIndex::BX => write!(f, "bx"),
-                RegisterIndex::SP => write!(f, "sp"),
-                RegisterIndex::BP => write!(f, "bp"),
-                RegisterIndex::SI => write!(f, "si"),
-                RegisterIndex::DI => write!(f, "di"),
+            Operand::Register(reg) => match reg {
+                Register::Regular(regular) => match regular {
+                    Regular::AL => write!(f, "al"),
+                    Regular::CL => write!(f, "cl"),
+                    Regular::DL => write!(f, "dl"),
+                    Regular::BL => write!(f, "bl"),
+                    Regular::AH => write!(f, "ah"),
+                    Regular::CH => write!(f, "ch"),
+                    Regular::DH => write!(f, "dh"),
+                    Regular::BH => write!(f, "bh"),
+                    Regular::AX => write!(f, "ax"),
+                    Regular::CX => write!(f, "cx"),
+                    Regular::DX => write!(f, "dx"),
+                    Regular::BX => write!(f, "bx"),
+                    Regular::SP => write!(f, "sp"),
+                    Regular::BP => write!(f, "bp"),
+                    Regular::SI => write!(f, "si"),
+                    Regular::DI => write!(f, "di"),
+                },
+                Register::Segment(segment) => match segment {
+                    Segment::ES => write!(f, "es"),
+                    Segment::CS => write!(f, "cs"),
+                    Segment::SS => write!(f, "ss"),
+                    Segment::DS => write!(f, "ds"),
+                },
             },
             Operand::Immediate(immediate) => match immediate {
                 Immediate::Byte(val) => write!(f, "byte {}", val),
@@ -194,24 +217,24 @@ pub enum EffectiveAddressBase {
 }
 
 // Map (reg_bits,w) -> a unique register index, in a 0..7 space for 8-bit or 16-bit.
-fn decode_8086_register_index(reg_bits: u8, w: bool) -> RegisterIndex {
+fn decode_8086_register_index(reg_bits: u8, w: bool) -> Regular {
     match (w, reg_bits) {
-        (false, 0b000) => RegisterIndex::AL,
-        (false, 0b001) => RegisterIndex::CL,
-        (false, 0b010) => RegisterIndex::DL,
-        (false, 0b011) => RegisterIndex::BL,
-        (false, 0b100) => RegisterIndex::AH,
-        (false, 0b101) => RegisterIndex::CH,
-        (false, 0b110) => RegisterIndex::DH,
-        (false, 0b111) => RegisterIndex::BH,
-        (true, 0b000) => RegisterIndex::AX,
-        (true, 0b001) => RegisterIndex::CX,
-        (true, 0b010) => RegisterIndex::DX,
-        (true, 0b011) => RegisterIndex::BX,
-        (true, 0b100) => RegisterIndex::SP,
-        (true, 0b101) => RegisterIndex::BP,
-        (true, 0b110) => RegisterIndex::SI,
-        (true, 0b111) => RegisterIndex::DI,
+        (false, 0b000) => Regular::AL,
+        (false, 0b001) => Regular::CL,
+        (false, 0b010) => Regular::DL,
+        (false, 0b011) => Regular::BL,
+        (false, 0b100) => Regular::AH,
+        (false, 0b101) => Regular::CH,
+        (false, 0b110) => Regular::DH,
+        (false, 0b111) => Regular::BH,
+        (true, 0b000) => Regular::AX,
+        (true, 0b001) => Regular::CX,
+        (true, 0b010) => Regular::DX,
+        (true, 0b011) => Regular::BX,
+        (true, 0b100) => Regular::SP,
+        (true, 0b101) => Regular::BP,
+        (true, 0b110) => Regular::SI,
+        (true, 0b111) => Regular::DI,
         _ => panic!("unknown register"),
     }
 }
@@ -228,7 +251,7 @@ fn decode_rm_operand(
     match mod_val {
         0b11 => {
             let reg = decode_8086_register_index(rm_val, w);
-            Operand::Register(reg)
+            Operand::Register(Register::Regular(reg))
         }
         0b00 => {
             if rm_val == 0b110 {
@@ -297,15 +320,7 @@ fn decode_rm_operand(
 enum P<'a> {
     /// Binary constant pattern.
     C(&'a BitSlice<u8, Msb0>),
-    /// The data (direction) flag.
-    /// Instruction destination is specified in REG field
-    D,
-    /// The wide flag.
-    /// Instruction operates on word data
-    W,
-    /// Sign flag
-    /// Sign extend 8-bit immediate data to 16 bits if W=1
-    S,
+    B(u8),
     /// mod bits.
     Mod,
     /// lo address bits
@@ -314,24 +329,29 @@ enum P<'a> {
     AddrHi,
     /// reg bits.
     Reg,
+    SegReg,
     /// rm bits.
     Rm,
     /// Expect a data byte.
-    Data,
-    /// Expect a data byte if W == 1.
-    DataIfW,
-    /// Expect a data byte if S == 1.
-    DataIfS,
+    Data8,
+    DataLo,
+    DataHi,
     OptDispLo,
     OptDispHi,
-    /// Implied value of the D flag.
-    ImplD(bool),
-    /// Implied value of the reg bits
-    ImplRegBasedOnW(RegisterIndex, RegisterIndex),
+    ImpliedRegOperand(Register),
+    /// Instruction operates on word data
+    ImpliedW(bool),
+    /// This is set when the `D` flag == 1
+    DestinationIsInRegField,
+    DestinationIsInModRmField,
     // --
     // logical action of what to do with the data we parsed
-    ParseReg,
-    ParseSecondOperand,
+    ParseRegField,
+    ParseRegFromData,
+    ParseRegFromAddr,
+    ParseModRm,
+    /// don't do any operand parsing, return the ix
+    Finish,
 }
 
 /// Instruction definition.
@@ -343,9 +363,7 @@ pub struct IxDef<'a> {
 
 #[derive(Debug, Default)]
 pub struct ParseContext {
-    d_val: Option<bool>,
     w_val: Option<bool>,
-    s_val: Option<bool>,
     mod_val: Option<u8>,
     reg_val: Option<u8>,
     rm_val: Option<u8>,
@@ -356,7 +374,7 @@ pub struct ParseContext {
     addr_lo: Option<u8>,
     addr_hi: Option<u8>,
     reg_operand: Option<Operand>,
-    second_operand: Option<Operand>,
+    modrm_operand: Option<Operand>,
 }
 
 impl<'a> IxDef<'a> {
@@ -386,6 +404,14 @@ impl<'a> IxDef<'a> {
         for item in &self.items {
             tracing::debug!(?item);
             match item {
+                P::B(pattern) => {
+                    let slice = read_bits(8);
+                    let candidate = slice_to_val(slice);
+                    if !candidate.eq(pattern) {
+                        tracing::debug!("invalid pattern");
+                        return None;
+                    }
+                }
                 // Compare the next bits to the expected pattern.
                 P::C(pattern) => {
                     let len = pattern.len();
@@ -394,14 +420,6 @@ impl<'a> IxDef<'a> {
                         tracing::debug!("invalid pattern");
                         return None;
                     }
-                }
-                P::D => {
-                    let slice = read_bits(1);
-                    ctx.d_val = Some(slice[0]);
-                }
-                P::W => {
-                    let slice = read_bits(1);
-                    ctx.w_val = Some(slice[0]);
                 }
                 P::Mod => {
                     let slice = read_bits(2);
@@ -413,25 +431,22 @@ impl<'a> IxDef<'a> {
                     let val = slice_to_val(slice);
                     ctx.reg_val = Some(val);
                 }
+                P::SegReg => {
+                    let slice = read_bits(2);
+                    let val = slice_to_val(slice);
+                    let seg = match val {
+                        0b00 => Segment::ES,
+                        0b01 => Segment::CS,
+                        0b10 => Segment::SS,
+                        0b11 => Segment::DS,
+                        _ => unreachable!(),
+                    };
+                    ctx.reg_operand = Some(Operand::Register(Register::Segment(seg)));
+                }
                 P::Rm => {
                     let slice = read_bits(3);
                     let val = slice_to_val(slice);
                     ctx.rm_val = Some(val);
-                }
-                P::Data => {
-                    let slice = read_bits(8);
-                    let val = slice_to_val(slice);
-                    ctx.data_lo = Some(val);
-                }
-                P::DataIfW => {
-                    if ctx.w_val == Some(true) {
-                        let slice = read_bits(8);
-                        let val = slice_to_val(slice);
-                        ctx.data_hi = Some(val);
-                    }
-                }
-                P::ImplD(value) => {
-                    ctx.d_val = Some(*value);
                 }
                 P::AddrLo => {
                     let slice = read_bits(8);
@@ -442,13 +457,6 @@ impl<'a> IxDef<'a> {
                     let slice = read_bits(8);
                     let val = slice_to_val(slice);
                     ctx.addr_hi = Some(val);
-                }
-                P::ImplRegBasedOnW(if_w, if_not_w) => {
-                    if ctx.w_val.unwrap() {
-                        ctx.reg_operand = Some(Operand::Register(*if_w));
-                    } else {
-                        ctx.reg_operand = Some(Operand::Register(*if_not_w));
-                    }
                 }
                 P::OptDispLo => {
                     match (ctx.mod_val.unwrap(), ctx.rm_val.unwrap()) {
@@ -489,50 +497,67 @@ impl<'a> IxDef<'a> {
                         }
                     }
                 }
-                P::ParseReg => {
-                    // parse reg opernad
-                    let tmp_reg_operand = if ctx.reg_operand.is_none() {
-                        if let Some(reg_val) = ctx.reg_val {
-                            Operand::Register(decode_8086_register_index(
-                                reg_val,
-                                ctx.w_val.unwrap(),
-                            ))
-                        } else {
-                            match ctx.data_lo {
-                                Some(data_lo) => operand_from_data(data_lo, ctx.data_hi),
-                                None => match (ctx.addr_lo, ctx.addr_hi) {
-                                    (None, None) => unreachable!(),
-                                    (Some(lo), Some(hi)) => {
-                                        let addr = u16::from_le_bytes([lo, hi]);
-                                        Operand::Address(EffectiveAddress::Direct(addr))
-                                    }
-                                    _ => unreachable!(),
-                                },
-                            }
-                        }
-                    } else {
-                        ctx.reg_operand.unwrap()
-                    };
-                    ctx.reg_operand = Some(tmp_reg_operand);
+                P::Data8 => {
+                    let slice = read_bits(8);
+                    let val = slice_to_val(slice);
+                    ctx.data_lo = Some(val);
                 }
-                P::ParseSecondOperand => {
+                P::DataLo => {
+                    let slice = read_bits(8);
+                    let val = slice_to_val(slice);
+                    ctx.data_hi = Some(val);
+                }
+                P::DataHi => {
+                    let slice = read_bits(8);
+                    let val = slice_to_val(slice);
+                    ctx.data_lo = Some(val);
+                }
+                P::ImpliedRegOperand(reg) => {
+                    ctx.reg_operand = Some(Operand::Register(*reg));
+                }
+                P::ParseRegField => {
+                    // parse reg opernad
+                    let reg_val = ctx.reg_val.unwrap();
+                    ctx.reg_operand = Some(Operand::Register(Register::Regular(
+                        decode_8086_register_index(reg_val, ctx.w_val.unwrap()),
+                    )));
+                }
+                P::ParseRegFromAddr => {
+                    let addr = u16::from_le_bytes([ctx.addr_lo.unwrap(), ctx.addr_hi.unwrap()]);
+                    ctx.reg_operand = Some(Operand::Address(EffectiveAddress::Direct(addr)));
+                }
+                P::ParseRegFromData => {
+                    if ctx.w_val.unwrap() {
+                        let word = u16::from_le_bytes([ctx.data_lo.unwrap(), ctx.data_hi.unwrap()]);
+                        ctx.reg_operand = Some(Operand::Immediate(Immediate::Word(word)));
+                    } else {
+                        ctx.reg_operand =
+                            Some(Operand::Immediate(Immediate::Byte(ctx.data_lo.unwrap())));
+                    };
+                }
+                P::ParseModRm => {
                     // parse the second opernad
-                    match (ctx.rm_val, ctx.mod_val, ctx.w_val) {
-                        (Some(rm), Some(mod_val), Some(w)) => {
-                            // Decode the r/m operand (which might consume extra bytes if there’s a displacement)
-                            let rm_operand =
-                                decode_rm_operand(mod_val, rm, w, ctx.disp_lo, ctx.disp_hi);
-                            ctx.second_operand = Some(rm_operand);
+                    match (ctx.rm_val, ctx.mod_val) {
+                        (Some(rm), Some(mod_val)) => {
+                            // Decode the r/m operand
+                            let rm_operand = decode_rm_operand(
+                                mod_val,
+                                rm,
+                                ctx.w_val.unwrap(),
+                                ctx.disp_lo,
+                                ctx.disp_hi,
+                            );
+                            ctx.modrm_operand = Some(rm_operand);
                         }
-                        (None, None, Some(_w)) => match ctx.data_lo {
+                        (None, None) => match ctx.data_lo {
                             Some(data_lo) => {
-                                ctx.second_operand = Some(operand_from_data(data_lo, ctx.data_hi));
+                                ctx.modrm_operand = Some(operand_from_data(data_lo, ctx.data_hi));
                             }
                             None => match (ctx.addr_lo, ctx.addr_hi) {
                                 (None, None) => todo!(),
                                 (Some(lo), Some(hi)) => {
                                     let addr = u16::from_le_bytes([lo, hi]);
-                                    ctx.second_operand =
+                                    ctx.modrm_operand =
                                         Some(Operand::Address(EffectiveAddress::Direct(addr)));
                                 }
                                 _ => unreachable!(),
@@ -541,40 +566,43 @@ impl<'a> IxDef<'a> {
                         _ => unimplemented!(),
                     };
                 }
-                P::S => {
-                    let slice = read_bits(1);
-                    ctx.s_val = Some(slice[0]);
+                P::ImpliedW(w_flag) => {
+                    ctx.w_val = Some(*w_flag);
                 }
-                P::DataIfS => {
-                    if ctx.w_val.unwrap() {
-                        if ctx.s_val.unwrap() {
-                            ctx.data_hi = Some(0);
-                        } else {
-                            let slice = read_bits(8);
-                            let val = slice_to_val(slice);
-                            ctx.data_hi = Some(val);
-                        }
-                    }
+                P::DestinationIsInRegField => {
+                    let bytes_consumed = (bit_offset + 7) / 8; // round up
+
+                    let inst = Instruction {
+                        size: bytes_consumed as u8,
+                        operation: self.name,
+                        operands: [ctx.reg_operand, ctx.modrm_operand],
+                    };
+                    return Some((inst, &bytes[bytes_consumed..]));
+                }
+                P::DestinationIsInModRmField => {
+                    let bytes_consumed = (bit_offset + 7) / 8; // round up
+
+                    let inst = Instruction {
+                        size: bytes_consumed as u8,
+                        operation: self.name,
+                        operands: [ctx.modrm_operand, ctx.reg_operand],
+                    };
+                    return Some((inst, &bytes[bytes_consumed..]));
+                }
+                P::Finish => {
+                    let bytes_consumed = (bit_offset + 7) / 8; // round up
+
+                    let inst = Instruction {
+                        size: bytes_consumed as u8,
+                        operation: self.name,
+                        operands: [None, None],
+                    };
+                    return Some((inst, &bytes[bytes_consumed..]));
                 }
             }
         }
 
-        let bytes_consumed = (bit_offset + 7) / 8; // round up
-
-        // d flag selects which operand is the destination register.
-        // if d -- ix source is REG field
-        // if not d -- destination is the REG field
-        let (first_operand, second_operand) = if ctx.d_val.unwrap_or_default() {
-            (ctx.reg_operand, ctx.second_operand)
-        } else {
-            (ctx.second_operand, ctx.reg_operand)
-        };
-        let inst = Instruction {
-            size: bytes_consumed as u8,
-            operation: self.name,
-            operands: [first_operand, second_operand],
-        };
-        Some((inst, &bytes[bytes_consumed..]))
+        unreachable!("the instruction parsing was not finalized")
     }
 }
 
@@ -598,67 +626,325 @@ fn operand_from_data(data_lo: u8, data_hi: Option<u8>) -> Operand {
 }
 
 // https://github.com/cmuratori/computer_enhance/blob/c0b12bed53a004e1f6ca2995dc3fb73d793ac6b8/perfaware/sim86/sim86_instruction_table.inl#L58
-#[rustfmt::skip]
-pub fn ix_table() -> [IxDef<'static>; 34] {
+pub fn ix_table() -> [IxDef<'static>; 8] {
     use P::*;
-    let arithm = |name: &'static str, idx: usize, overrides: &[(usize, P<'static>)]| {
-        let base_arithm_defs = [
-            IxDef::new("add",  vec![C(bits!(static u8, Msb0; 0,0,0,0,0,0)), D, W, Mod, Reg, Rm, OptDispLo, OptDispHi, ParseReg, ParseSecondOperand]),
-            IxDef::new("add",  vec![C(bits!(static u8, Msb0; 1,0,0,0,0,0)), S, W, Mod, C(bits!(static u8, Msb0; 0, 0, 0)), Rm, OptDispLo, OptDispHi, Data, DataIfS, ImplD(false), ParseReg, ParseSecondOperand]),
-            IxDef::new("add",  vec![C(bits!(static u8, Msb0; 0,0,0,0,0,1,0)), W, Data, DataIfW, ImplRegBasedOnW(RegisterIndex::AX, RegisterIndex::AL), ImplD(true),  ParseReg, ParseSecondOperand]),
-        ];
-        let mut def = base_arithm_defs[idx].clone();
-        for (idx, ov) in overrides.iter() {
-            def.items[*idx] = ov.clone();
-        }
-        def.name = name;
-        def
+    #[rustfmt::skip]
+    let common_two_op = [
+        IxDef::new("---",  vec![B(0), Mod, Reg, Rm, OptDispLo, OptDispHi, ImpliedW(false), ParseRegField, ParseModRm, DestinationIsInModRmField]),
+        IxDef::new("---",  vec![B(0), Mod, Reg, Rm, OptDispLo, OptDispHi, ImpliedW(true), ParseRegField, ParseModRm, DestinationIsInModRmField]),
+        IxDef::new("---",  vec![B(0), Mod, Reg, Rm, OptDispLo, OptDispHi, ImpliedW(false), ParseRegField, ParseModRm, DestinationIsInRegField]),
+        IxDef::new("---",  vec![B(0), Mod, Reg, Rm, OptDispLo, OptDispHi, ImpliedW(true), ParseRegField, ParseModRm, DestinationIsInRegField]),
+        IxDef::new("---",  vec![B(0), Data8, ImpliedRegOperand(Register::Regular(Regular::AL)), ParseModRm, DestinationIsInRegField]),
+        IxDef::new("---",  vec![B(0), DataLo, DataHi, ImpliedRegOperand(Register::Regular(Regular::AX)), ParseModRm, DestinationIsInRegField]),
+    ];
+    #[rustfmt::skip]
+    let common_single_op = [
+        IxDef::new("---",  vec![B(0), ImpliedRegOperand(Register::Regular(Regular::AX)), DestinationIsInRegField]),
+        IxDef::new("---",  vec![B(0), ImpliedRegOperand(Register::Regular(Regular::CX)), DestinationIsInRegField]),
+        IxDef::new("---",  vec![B(0), ImpliedRegOperand(Register::Regular(Regular::DX)), DestinationIsInRegField]),
+        IxDef::new("---",  vec![B(0), ImpliedRegOperand(Register::Regular(Regular::BX)), DestinationIsInRegField]),
+        IxDef::new("---",  vec![B(0), ImpliedRegOperand(Register::Regular(Regular::SP)), DestinationIsInRegField]),
+        IxDef::new("---",  vec![B(0), ImpliedRegOperand(Register::Regular(Regular::BP)), DestinationIsInRegField]),
+        IxDef::new("---",  vec![B(0), ImpliedRegOperand(Register::Regular(Regular::SI)), DestinationIsInRegField]),
+        IxDef::new("---",  vec![B(0), ImpliedRegOperand(Register::Regular(Regular::DI)), DestinationIsInRegField])
+    ];
+
+    let _base_build =
+        |new_pattern: &[P<'static>], common: &[IxDef<'static>], new_name: &'static str| {
+            new_pattern
+                .iter()
+                .zip(common.iter())
+                .map(|(new_pattern, def)| {
+                    let mut def = def.clone();
+                    def.name = new_name;
+                    def.items[0] = new_pattern.clone();
+                    def
+                })
+                .collect::<Vec<_>>()
+        };
+    let build_common_op = |new_pattern: &[P<'static>], new_name: &'static str| {
+        _base_build(new_pattern, &common_two_op, new_name)
     };
-    [
-        // reg/mem to/from reg
-        IxDef::new("mov", vec![C(bits!(static u8, Msb0; 1, 0, 0, 0, 1, 0)), D, W, Mod, Reg, Rm, OptDispLo, OptDispHi, ParseReg, ParseSecondOperand]),
-        // imm to reg 
-        IxDef::new("mov", vec![C(bits!(static u8, Msb0; 1, 1, 0, 0, 0, 1, 1)), W, Mod, C(bits!(static u8, Msb0; 0, 0, 0)), Rm, OptDispLo, OptDispHi, Data, DataIfW, ImplD(false), ParseReg, ParseSecondOperand]),
-        // imm to reg 
-        IxDef::new("mov",  vec![C(bits!(static u8, Msb0; 1, 0, 1, 1)), W, Reg, Data, DataIfW, ImplD(true), ParseReg, ParseSecondOperand]),
-        // mem to accumulator
-        IxDef::new("mov",  vec![C(bits!(static u8, Msb0; 1, 0, 1, 0, 0, 0, 0)), W, AddrLo, AddrHi, ImplRegBasedOnW(RegisterIndex::AX, RegisterIndex::AL), ImplD(true),  ParseReg, ParseSecondOperand]),
-        // accumulator to mem
-        IxDef::new("mov",  vec![C(bits!(static u8, Msb0; 1, 0, 1, 0, 0, 0, 1)), W, AddrLo, AddrHi, ImplRegBasedOnW(RegisterIndex::AX, RegisterIndex::AL), ImplD(false), ParseReg, ParseSecondOperand]),
-        // add
-        arithm("add", 0, &[]),
-        arithm("add", 1, &[]),
-        arithm("add", 2, &[]),
-        // sub
-        arithm("sub", 0, &[(0, C(bits!(static u8, Msb0; 0,0,1,0,1,0)))]),
-        arithm("sub", 1, &[(4, C(bits!(static u8, Msb0; 1,0,1)))]),
-        arithm("sub", 2, &[(0, C(bits!(static u8, Msb0; 0,0,1,0,1,1,0)))]),
-        // cmp
-        arithm("cmp", 0, &[(0, C(bits!(static u8, Msb0; 0,0,1,1,1,0)))]),
-        arithm("cmp", 1, &[(4, C(bits!(static u8, Msb0; 1,1,1)))]),
-        arithm("cmp", 2, &[(0, C(bits!(static u8, Msb0; 0,0,1,1,1,1,0)))]),
-        // je/jz
-        IxDef::new("je",  vec![C(bits!(static u8, Msb0; 0,1,1,1,0,1,0,0)), Data, ParseReg]),
-        IxDef::new("jl",  vec![C(bits!(static u8, Msb0; 0,1,1,1,1,1,0,0)), Data, ParseReg]),
-        IxDef::new("jle",  vec![C(bits!(static u8, Msb0; 0,1,1,1,1,1,1,0)), Data, ParseReg]),
-        IxDef::new("jb",  vec![C(bits!(static u8, Msb0; 0,1,1,1,0,0,1,0)), Data, ParseReg]),
-        IxDef::new("jbe",  vec![C(bits!(static u8, Msb0; 0,1,1,1,0,1,1,0)), Data, ParseReg]),
-        IxDef::new("jp",  vec![C(bits!(static u8, Msb0; 0,1,1,1,1,0,1,0)), Data, ParseReg]),
-        IxDef::new("jo",  vec![C(bits!(static u8, Msb0; 0,1,1,1,0,0,0,0)), Data, ParseReg]),
-        IxDef::new("js",  vec![C(bits!(static u8, Msb0; 0,1,1,1,1,0,0,0)), Data, ParseReg]),
-        IxDef::new("jne",  vec![C(bits!(static u8, Msb0; 0,1,1,1,0,1,0,1)), Data, ParseReg]),
-        IxDef::new("jnl",  vec![C(bits!(static u8, Msb0; 0,1,1,1,1,1,0,1)), Data, ParseReg]),
-        IxDef::new("jnle",  vec![C(bits!(static u8, Msb0; 0,1,1,1,1,1,1,1)), Data, ParseReg]),
-        IxDef::new("jnb",  vec![C(bits!(static u8, Msb0; 0,1,1,1,0,0,1,1)), Data, ParseReg]),
-        IxDef::new("jnbe",  vec![C(bits!(static u8, Msb0; 0,1,1,1,0,1,1,1)), Data, ParseReg]),
-        IxDef::new("jnp",  vec![C(bits!(static u8, Msb0; 0,1,1,1,1,0,1,1)), Data, ParseReg]),
-        IxDef::new("jno",  vec![C(bits!(static u8, Msb0; 0,1,1,1,0,0,0,1)), Data, ParseReg]),
-        IxDef::new("jns",  vec![C(bits!(static u8, Msb0; 0,1,1,1,1,0,0,1)), Data, ParseReg]),
-        IxDef::new("loop",  vec![C(bits!(static u8, Msb0; 1,1,1,0,0,0,1,0)), Data, ParseReg]),
-        IxDef::new("loopz",  vec![C(bits!(static u8, Msb0; 1,1,1,0,0,0,0,1)), Data, ParseReg]),
-        IxDef::new("loopnz",  vec![C(bits!(static u8, Msb0; 1,1,1,0,0,0,0,0)), Data, ParseReg]),
-        IxDef::new("jcxz",  vec![C(bits!(static u8, Msb0; 1,1,1,0,0,0,1,1)), Data, ParseReg]),
-    ]
+    let build_common_op_single = |new_pattern: &[P<'static>], new_name: &'static str| {
+        _base_build(new_pattern, &common_single_op, new_name)
+    };
+
+    let add = build_common_op(
+        &[B(0x00), B(0x01), B(0x02), B(0x03), B(0x04), B(0x05)],
+        "add",
+    );
+    let or = build_common_op(
+        &[B(0x08), B(0x09), B(0x0A), B(0x0B), B(0x0C), B(0x0D)],
+        "or",
+    );
+    let adc = build_common_op(
+        &[B(0x10), B(0x11), B(0x12), B(0x13), B(0x14), B(0x15)],
+        "adc",
+    );
+    let sbb = build_common_op(
+        &[B(0x18), B(0x19), B(0x1A), B(0x1B), B(0x1C), B(0x1D)],
+        "sbb",
+    );
+    let and = build_common_op(
+        &[B(0x20), B(0x21), B(0x22), B(0x23), B(0x24), B(0x25)],
+        "and",
+    );
+    let sub = build_common_op(
+        &[B(0x28), B(0x29), B(0x2A), B(0x2B), B(0x2C), B(0x2D)],
+        "sub",
+    );
+    let xor = build_common_op(
+        &[B(0x30), B(0x31), B(0x32), B(0x33), B(0x34), B(0x35)],
+        "xor",
+    );
+    let cmp = build_common_op(
+        &[B(0x38), B(0x39), B(0x3A), B(0x3B), B(0x3C), B(0x3D)],
+        "cmp",
+    );
+    let inc = build_common_op_single(
+        &[
+            B(0x40),
+            B(0x41),
+            B(0x42),
+            B(0x43),
+            B(0x44),
+            B(0x45),
+            B(0x46),
+            B(0x47),
+        ],
+        "inc",
+    );
+    let dec = build_common_op_single(
+        &[
+            B(0x48),
+            B(0x49),
+            B(0x4A),
+            B(0x4B),
+            B(0x4C),
+            B(0x4D),
+            B(0x4E),
+            B(0x4F),
+        ],
+        "dec",
+    );
+    let push = build_common_op_single(
+        &[
+            B(0x50),
+            B(0x51),
+            B(0x52),
+            B(0x53),
+            B(0x54),
+            B(0x55),
+            B(0x56),
+            B(0x57),
+        ],
+        "push",
+    );
+    let pop = build_common_op_single(
+        &[
+            B(0x58),
+            B(0x59),
+            B(0x5A),
+            B(0x5B),
+            B(0x5C),
+            B(0x5D),
+            B(0x5E),
+            B(0x5F),
+        ],
+        "pop",
+    );
+
+    #[rustfmt::skip]
+    let special_0x80 = IxDef::new("...",  vec![B(0x80), Mod, C(bits!(static u8, Msb0; 0,0,0)), Rm, OptDispLo, OptDispHi, Data8, ImpliedW(false), ParseRegFromData, ParseModRm, DestinationIsInModRmField]);
+    #[rustfmt::skip]
+    let special_0x81 = IxDef::new("...",  vec![B(0x80), Mod, C(bits!(static u8, Msb0; 0,0,0)), Rm, OptDispLo, OptDispHi, DataLo, DataHi, ImpliedW(true), ParseRegFromData, ParseModRm, DestinationIsInModRmField]);
+
+    #[rustfmt::skip]
+    let res = [
+        add[0].clone(),
+        add[1].clone(),
+        add[2].clone(),
+        add[3].clone(),
+        add[4].clone(),
+        add[5].clone(),
+        // hex 05
+        IxDef::new("push", vec![B(0x06), ImpliedRegOperand(Register::Segment(Segment::ES)), DestinationIsInRegField]),
+        IxDef::new("pop", vec![B(0x07), ImpliedRegOperand(Register::Segment(Segment::ES)), DestinationIsInRegField]),
+        or[0].clone(),
+        or[1].clone(),
+        or[2].clone(),
+        or[3].clone(),
+        or[4].clone(),
+        or[5].clone(),
+        IxDef::new("push", vec![B(0x0E), ImpliedRegOperand(Register::Segment(Segment::CS)), DestinationIsInRegField]),
+        IxDef::new("...", vec![B(0x0F) /* not used */]),
+        // hex 0f
+        adc[0].clone(),
+        adc[1].clone(),
+        adc[2].clone(),
+        adc[3].clone(),
+        adc[4].clone(),
+        adc[5].clone(),
+        IxDef::new("push", vec![B(0x06), ImpliedRegOperand(Register::Segment(Segment::SS)), DestinationIsInRegField]),
+        IxDef::new("pop", vec![B(0x07), ImpliedRegOperand(Register::Segment(Segment::SS)), DestinationIsInRegField]),
+        // hex 17
+        sbb[0].clone(),
+        sbb[1].clone(),
+        sbb[2].clone(),
+        sbb[3].clone(),
+        sbb[4].clone(),
+        sbb[5].clone(),
+        IxDef::new("push", vec![B(0x06), ImpliedRegOperand(Register::Segment(Segment::DS)), DestinationIsInRegField]),
+        IxDef::new("pop", vec![B(0x07), ImpliedRegOperand(Register::Segment(Segment::DS)), DestinationIsInRegField]),
+        // hex 1f
+        and[0].clone(),
+        and[1].clone(),
+        and[2].clone(),
+        and[3].clone(),
+        and[4].clone(),
+        and[5].clone(),
+        IxDef::new("es", vec![B(0x26), Finish]),
+        IxDef::new("daa", vec![B(0x27), Finish]),
+        sub[0].clone(),
+        sub[1].clone(),
+        sub[2].clone(),
+        sub[3].clone(),
+        sub[4].clone(),
+        sub[5].clone(),
+        IxDef::new("cs", vec![B(0x2F), Finish]),
+        IxDef::new("das", vec![B(0x2F), Finish]),
+        xor[0].clone(),
+        xor[1].clone(),
+        xor[2].clone(),
+        xor[3].clone(),
+        xor[4].clone(),
+        xor[5].clone(),
+        IxDef::new("ss", vec![B(0x36), Finish]),
+        IxDef::new("aaa", vec![B(0x37), Finish]),
+        cmp[0].clone(),
+        cmp[1].clone(),
+        cmp[2].clone(),
+        cmp[3].clone(),
+        cmp[4].clone(),
+        cmp[5].clone(),
+        IxDef::new("ds", vec![B(0x3E), Finish]),
+        IxDef::new("aas", vec![B(0x3F), Finish]),
+        // hex 3f
+        inc[0].clone(),
+        inc[1].clone(),
+        inc[2].clone(),
+        inc[3].clone(),
+        inc[4].clone(),
+        inc[5].clone(),
+        inc[6].clone(),
+        inc[7].clone(),
+        dec[0].clone(),
+        dec[1].clone(),
+        dec[2].clone(),
+        dec[3].clone(),
+        dec[4].clone(),
+        dec[5].clone(),
+        dec[6].clone(),
+        dec[7].clone(),
+        push[0].clone(),
+        push[1].clone(),
+        push[2].clone(),
+        push[3].clone(),
+        push[4].clone(),
+        push[5].clone(),
+        push[6].clone(),
+        push[7].clone(),
+        pop[0].clone(),
+        pop[1].clone(),
+        pop[2].clone(),
+        pop[3].clone(),
+        pop[4].clone(),
+        pop[5].clone(),
+        pop[6].clone(),
+        pop[7].clone(),
+        IxDef::new("...", vec![B(0x60) /* not used */]),
+        IxDef::new("...", vec![B(0x61) /* not used */]),
+        IxDef::new("...", vec![B(0x62) /* not used */]),
+        IxDef::new("...", vec![B(0x63) /* not used */]),
+        IxDef::new("...", vec![B(0x64) /* not used */]),
+        IxDef::new("...", vec![B(0x65) /* not used */]),
+        IxDef::new("...", vec![B(0x66) /* not used */]),
+        IxDef::new("...", vec![B(0x67) /* not used */]),
+        IxDef::new("...", vec![B(0x68) /* not used */]),
+        IxDef::new("...", vec![B(0x69) /* not used */]),
+        IxDef::new("...", vec![B(0x6A) /* not used */]),
+        IxDef::new("...", vec![B(0x6B) /* not used */]),
+        IxDef::new("...", vec![B(0x6C) /* not used */]),
+        IxDef::new("...", vec![B(0x6D) /* not used */]),
+        IxDef::new("...", vec![B(0x6E) /* not used */]),
+        IxDef::new("...", vec![B(0x6F) /* not used */]),
+        // jumps
+        IxDef::new("jo",    vec![B(0x70), Data8, ImpliedW(false), ParseRegFromData]),
+        IxDef::new("jno",   vec![B(0x71), Data8, ImpliedW(false), ParseRegFromData]),
+        IxDef::new("jb",    vec![B(0x72), Data8, ImpliedW(false), ParseRegFromData]),
+        IxDef::new("jnbe",  vec![B(0x77), Data8, ImpliedW(false), ParseRegFromData]),
+        IxDef::new("js",    vec![B(0x78), Data8, ImpliedW(false), ParseRegFromData]),
+        IxDef::new("jns",   vec![B(0x79), Data8, ImpliedW(false), ParseRegFromData]),
+        IxDef::new("jp",    vec![B(0x7A), Data8, ImpliedW(false), ParseRegFromData]),
+        IxDef::new("jnp",   vec![B(0x7B), Data8, ImpliedW(false), ParseRegFromData]),
+        IxDef::new("jl",    vec![B(0x7C), Data8, ImpliedW(false), ParseRegFromData]),
+        IxDef::new("jnl",   vec![B(0x7D), Data8, ImpliedW(false), ParseRegFromData]),
+        IxDef::new("jle",   vec![B(0x7E), Data8, ImpliedW(false), ParseRegFromData]),
+        IxDef::new("jnle",  vec![B(0x7F), Data8, ImpliedW(false), ParseRegFromData]),
+        // special mod handling
+        IxDef { name: "add", items: { let items = special_0x80.items.clone(); items[2] = C(bits!(static u8, Msb0; 0,0,0)); items } },
+        IxDef { name: "or",  items: { let items = special_0x80.items.clone(); items[2] = C(bits!(static u8, Msb0; 0,0,1)); items } },
+        IxDef { name: "adc", items: { let items = special_0x80.items.clone(); items[2] = C(bits!(static u8, Msb0; 0,1,0)); items } },
+        IxDef { name: "sbb", items: { let items = special_0x80.items.clone(); items[2] = C(bits!(static u8, Msb0; 1,0,0)); items } },
+        IxDef { name: "and", items: { let items = special_0x80.items.clone(); items[2] = C(bits!(static u8, Msb0; 0,1,1)); items } },
+        IxDef { name: "sub", items: { let items = special_0x80.items.clone(); items[2] = C(bits!(static u8, Msb0; 1,0,0)); items } },
+        IxDef { name: "xor", items: { let items = special_0x80.items.clone(); items[2] = C(bits!(static u8, Msb0; 1,0,1)); items } },
+        IxDef { name: "cmp", items: { let items = special_0x80.items.clone(); items[2] = C(bits!(static u8, Msb0; 1,1,1)); items } },
+        // special mod handling
+        IxDef { name: "add", items: { let items = special_0x81.items.clone(); items[2] = C(bits!(static u8, Msb0; 0,0,0)); items } },
+        IxDef { name: "or",  items: { let items = special_0x81.items.clone(); items[2] = C(bits!(static u8, Msb0; 0,0,1)); items } },
+        IxDef { name: "adc", items: { let items = special_0x81.items.clone(); items[2] = C(bits!(static u8, Msb0; 0,1,0)); items } },
+        IxDef { name: "sbb", items: { let items = special_0x81.items.clone(); items[2] = C(bits!(static u8, Msb0; 1,0,0)); items } },
+        IxDef { name: "and", items: { let items = special_0x81.items.clone(); items[2] = C(bits!(static u8, Msb0; 0,1,1)); items } },
+        IxDef { name: "sub", items: { let items = special_0x81.items.clone(); items[2] = C(bits!(static u8, Msb0; 1,0,0)); items } },
+        IxDef { name: "xor", items: { let items = special_0x81.items.clone(); items[2] = C(bits!(static u8, Msb0; 1,0,1)); items } },
+        IxDef { name: "cmp", items: { let items = special_0x81.items.clone(); items[2] = C(bits!(static u8, Msb0; 1,1,1)); items } },
+        // 0x82 opcodes are not really used by assemblers. they behave like 0x80
+        IxDef::new("add",  vec![B(0x82), Mod, C(bits!(static u8, Msb0; 0,0,0)), Rm, OptDispLo, OptDispHi, Data8, ImpliedW(false), ParseRegFromData, ParseModRm, DestinationIsInModRmField]),
+        IxDef::new("...",  vec![B(0x82), Mod, C(bits!(static u8, Msb0; 0,0,1)), Rm, /* not used */]),
+        IxDef::new("adc",  vec![B(0x82), Mod, C(bits!(static u8, Msb0; 0,1,0)), Rm, OptDispLo, OptDispHi, Data8, ImpliedW(false), ParseRegFromData, ParseModRm, DestinationIsInModRmField]),
+        IxDef::new("sbb",  vec![B(0x82), Mod, C(bits!(static u8, Msb0; 0,1,1)), Rm, OptDispLo, OptDispHi, Data8, ImpliedW(false), ParseRegFromData, ParseModRm, DestinationIsInModRmField]),
+        IxDef::new("...",  vec![B(0x82), Mod, C(bits!(static u8, Msb0; 1,0,0)), Rm, /* not used */]),
+        IxDef::new("sub",  vec![B(0x82), Mod, C(bits!(static u8, Msb0; 1,0,1)), Rm, OptDispLo, OptDispHi, Data8, ImpliedW(false), ParseRegFromData, ParseModRm, DestinationIsInModRmField]),
+        IxDef::new("...",  vec![B(0x82), Mod, C(bits!(static u8, Msb0; 1,1,0)), Rm, /* not used */]),
+        IxDef::new("cmp",  vec![B(0x82), Mod, C(bits!(static u8, Msb0; 1,1,1)), Rm, OptDispLo, OptDispHi, Data8, ImpliedW(false), ParseRegFromData, ParseModRm, DestinationIsInModRmField]),
+        IxDef::new("...",  vec![B(0x83), Mod, C(bits!(static u8, Msb0; 1,0,0)), Rm, /* not used */]),
+        // 0x83 is the same as 0x81 except the immediate is 8 bit but we need to treat it like it's 16 bit. it's the sign-extended value
+        IxDef::new("add",  vec![B(0x82), Mod, C(bits!(static u8, Msb0; 0,0,0)), Rm, OptDispLo, OptDispHi, Data8, ImpliedW(false), ParseRegFromData, ParseModRm, DestinationIsInModRmField]),
+        IxDef::new("...",  vec![B(0x82), Mod, C(bits!(static u8, Msb0; 0,0,1)), Rm, /* not used */]),
+        IxDef::new("adc",  vec![B(0x82), Mod, C(bits!(static u8, Msb0; 0,1,0)), Rm, OptDispLo, OptDispHi, Data8, ImpliedW(false), ParseRegFromData, ParseModRm, DestinationIsInModRmField]),
+        IxDef::new("sbb",  vec![B(0x82), Mod, C(bits!(static u8, Msb0; 0,1,1)), Rm, OptDispLo, OptDispHi, Data8, ImpliedW(false), ParseRegFromData, ParseModRm, DestinationIsInModRmField]),
+        IxDef::new("...",  vec![B(0x82), Mod, C(bits!(static u8, Msb0; 1,0,0)), Rm, /* not used */]),
+        IxDef::new("sub",  vec![B(0x82), Mod, C(bits!(static u8, Msb0; 1,0,1)), Rm, OptDispLo, OptDispHi, Data8, ImpliedW(false), ParseRegFromData, ParseModRm, DestinationIsInModRmField]),
+        IxDef::new("...",  vec![B(0x82), Mod, C(bits!(static u8, Msb0; 1,1,0)), Rm, /* not used */]),
+        IxDef::new("cmp",  vec![B(0x82), Mod, C(bits!(static u8, Msb0; 1,1,1)), Rm, OptDispLo, OptDispHi, Data8, ImpliedW(false), ParseRegFromData, ParseModRm, DestinationIsInModRmField]),
+        IxDef::new("...",  vec![B(0x83), Mod, C(bits!(static u8, Msb0; 1,0,0)), Rm, /* not used */]),
+        //
+        IxDef::new("test",  vec![B(0x84), Mod, Reg, Rm, OptDispLo, OptDispHi, ImpliedW(false), ParseModRm, ParseRegField, DestinationIsInModRmField]),
+        IxDef::new("test",  vec![B(0x85), Mod, Reg, Rm, OptDispLo, OptDispHi, ImpliedW(true), ParseModRm, ParseRegField, DestinationIsInModRmField]),
+        IxDef::new("xchg",  vec![B(0x86), Mod, Reg, Rm, OptDispLo, OptDispHi, ImpliedW(false), ParseModRm, ParseRegField, DestinationIsInRegField]),
+        IxDef::new("xchg",  vec![B(0x87), Mod, Reg, Rm, OptDispLo, OptDispHi, ImpliedW(true), ParseModRm, ParseRegField, DestinationIsInRegField]),
+        // movs
+        IxDef::new("mov",  vec![B(0x88), Mod, Reg, Rm, OptDispLo, OptDispHi, ImpliedW(false), ParseModRm, ParseRegField, DestinationIsInModRmField]),
+        IxDef::new("mov",  vec![B(0x89), Mod, Reg, Rm, OptDispLo, OptDispHi, ImpliedW(true), ParseModRm, ParseRegField, DestinationIsInModRmField]),
+        IxDef::new("mov",  vec![B(0x8a), Mod, Reg, Rm, OptDispLo, OptDispHi, ImpliedW(false), ParseModRm, ParseRegField, DestinationIsInRegField]),
+        IxDef::new("mov",  vec![B(0x8b), Mod, Reg, Rm, OptDispLo, OptDispHi, ImpliedW(true), ParseModRm, ParseRegField, DestinationIsInRegField]),
+        IxDef::new("mov",  vec![B(0x8c), Mod, C(bits!(static u8, Msb0; 0)), SegReg, Rm, OptDispLo, OptDispHi, ImpliedW(true), ParseModRm, DestinationIsInModRmField]),
+        IxDef::new("mov",  vec![B(0x8c), Mod, C(bits!(static u8, Msb0; 1)), Finish, /* this is not a valid opcode */]), 
+        IxDef::new("lea",  vec![B(0x8d), Mod, Reg, Rm, OptDispLo, OptDispHi, ImpliedW(true), ParseModRm, ParseRegField, DestinationIsInRegField]),
+        IxDef::new("mov",  vec![B(0x8d), Mod, C(bits!(static u8, Msb0; 0)), SegReg, Rm, OptDispLo, OptDispHi, ImpliedW(true), ParseModRm, DestinationIsInRegField]),
+    ];
+    res
 }
 
 #[cfg(test)]
