@@ -41,11 +41,20 @@ impl fmt::Display for InstructionSet {
 
 impl fmt::Display for Instruction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{:} {:}, {:}",
-            self.operation, self.operands[0], self.operands[1]
-        )
+        match (self.operands[0], self.operands[1]) {
+            (None, None) => {
+                write!(f, "{:}", self.operation)
+            }
+            (None, Some(op)) => {
+                write!(f, "{:} {:}", self.operation, op)
+            }
+            (Some(op), None) => {
+                write!(f, "{:} {:}", self.operation, op)
+            }
+            (Some(op1), Some(op2)) => {
+                write!(f, "{:} {:}, {:}", self.operation, op1, op2)
+            }
+        }
     }
 }
 
@@ -53,7 +62,7 @@ impl fmt::Display for Instruction {
 pub struct Instruction {
     size: u8,
     operation: &'static str,
-    operands: [Operand; 2],
+    operands: [Option<Operand>; 2],
 }
 
 #[repr(u8)]
@@ -391,7 +400,6 @@ impl<'a> IxDef<'a> {
 
         // Helper: read the next `length` bits.
         let mut read_bits = |length: usize| -> &BitSlice<u8, Msb0> {
-            dbg!(length);
             if bit_offset + length > bits.len() {
                 panic!("trying to read too many bits");
             }
@@ -581,10 +589,10 @@ impl<'a> IxDef<'a> {
         // d flag selects which operand is the destination register.
         // if d -- ix source is REG field
         // if not d -- destination is the REG field
-        let (first_operand, second_operand) = if ctx.d_val.unwrap() {
-            (ctx.reg_operand.unwrap(), ctx.second_operand.unwrap())
+        let (first_operand, second_operand) = if ctx.d_val.unwrap_or_default() {
+            (ctx.reg_operand, ctx.second_operand)
         } else {
-            (ctx.second_operand.unwrap(), ctx.reg_operand.unwrap())
+            (ctx.second_operand, ctx.reg_operand)
         };
         let inst = Instruction {
             size: bytes_consumed as u8,
@@ -616,7 +624,7 @@ fn operand_from_data(data_lo: u8, data_hi: Option<u8>) -> Operand {
 
 // https://github.com/cmuratori/computer_enhance/blob/c0b12bed53a004e1f6ca2995dc3fb73d793ac6b8/perfaware/sim86/sim86_instruction_table.inl#L58
 #[rustfmt::skip]
-pub fn ix_table() -> [IxDef<'static>; 14] {
+pub fn ix_table() -> [IxDef<'static>; 34] {
     use P::*;
     let arithm = |name: &'static str, idx: usize, overrides: &[(usize, P<'static>)]| {
         let base_arithm_defs = [
@@ -654,6 +662,27 @@ pub fn ix_table() -> [IxDef<'static>; 14] {
         arithm("cmp", 0, &[(0, C(bits!(static u8, Msb0; 0,0,1,1,1,0)))]),
         arithm("cmp", 1, &[(4, C(bits!(static u8, Msb0; 1,1,1)))]),
         arithm("cmp", 2, &[(0, C(bits!(static u8, Msb0; 0,0,1,1,1,1,0)))]),
+        // je/jz
+        IxDef::new("je",  vec![C(bits!(static u8, Msb0; 0,1,1,1,0,1,0,0)), Data, ParseReg]),
+        IxDef::new("jl",  vec![C(bits!(static u8, Msb0; 0,1,1,1,1,1,0,0)), Data, ParseReg]),
+        IxDef::new("jle",  vec![C(bits!(static u8, Msb0; 0,1,1,1,1,1,1,0)), Data, ParseReg]),
+        IxDef::new("jb",  vec![C(bits!(static u8, Msb0; 0,1,1,1,0,0,1,0)), Data, ParseReg]),
+        IxDef::new("jbe",  vec![C(bits!(static u8, Msb0; 0,1,1,1,0,1,1,0)), Data, ParseReg]),
+        IxDef::new("jp",  vec![C(bits!(static u8, Msb0; 0,1,1,1,1,0,1,0)), Data, ParseReg]),
+        IxDef::new("jo",  vec![C(bits!(static u8, Msb0; 0,1,1,1,0,0,0,0)), Data, ParseReg]),
+        IxDef::new("js",  vec![C(bits!(static u8, Msb0; 0,1,1,1,1,0,0,0)), Data, ParseReg]),
+        IxDef::new("jne",  vec![C(bits!(static u8, Msb0; 0,1,1,1,0,1,0,1)), Data, ParseReg]),
+        IxDef::new("jnl",  vec![C(bits!(static u8, Msb0; 0,1,1,1,1,1,0,1)), Data, ParseReg]),
+        IxDef::new("jnle",  vec![C(bits!(static u8, Msb0; 0,1,1,1,1,1,1,1)), Data, ParseReg]),
+        IxDef::new("jnb",  vec![C(bits!(static u8, Msb0; 0,1,1,1,0,0,1,1)), Data, ParseReg]),
+        IxDef::new("jnbe",  vec![C(bits!(static u8, Msb0; 0,1,1,1,0,1,1,1)), Data, ParseReg]),
+        IxDef::new("jnp",  vec![C(bits!(static u8, Msb0; 0,1,1,1,1,0,1,1)), Data, ParseReg]),
+        IxDef::new("jno",  vec![C(bits!(static u8, Msb0; 0,1,1,1,0,0,0,1)), Data, ParseReg]),
+        IxDef::new("jns",  vec![C(bits!(static u8, Msb0; 0,1,1,1,1,0,0,1)), Data, ParseReg]),
+        IxDef::new("loop",  vec![C(bits!(static u8, Msb0; 1,1,1,0,0,0,1,0)), Data, ParseReg]),
+        IxDef::new("loopz",  vec![C(bits!(static u8, Msb0; 1,1,1,0,0,0,0,1)), Data, ParseReg]),
+        IxDef::new("loopnz",  vec![C(bits!(static u8, Msb0; 1,1,1,0,0,0,0,0)), Data, ParseReg]),
+        IxDef::new("jcxz",  vec![C(bits!(static u8, Msb0; 1,1,1,0,0,0,1,1)), Data, ParseReg]),
     ]
 }
 
@@ -885,6 +914,18 @@ add bx, [bx + si]
         assert_eq!(decoded.ixs.len(), 1);
         assert_eq!(format!("{}", decoded.ixs[0]), "add bx, [bx + si]");
     }
+    #[test]
+    fn test_manual_5() {
+        let asm_snippet = r#"
+bits 16
+jnz test_label1
+test_label1:
+"#;
+        let machine_code = assemble_16_bit(asm_snippet);
+        let decoded = decode(&machine_code);
+        assert_eq!(decoded.ixs.len(), 1);
+        assert_eq!(format!("{}", decoded.ixs[0]), "jne byte 0");
+    }
 
     #[test]
     fn test_listing_40() {
@@ -893,7 +934,7 @@ add bx, [bx + si]
     }
 
     #[test]
-    // #[ignore = "jumps and labels ar PITA to generate but it works (manually validated, trust me bro)"]
+    #[ignore = "jumps and labels ar PITA to generate but it works (manually validated, trust me bro)"]
     fn test_listing_41() {
         let test = "listing_0041_add_sub_cmp_jnz";
         read_and_test(test);
