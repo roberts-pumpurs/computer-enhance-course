@@ -334,31 +334,6 @@ enum P<'a> {
     ParseSecondOperand,
 }
 
-impl<'a> P<'a> {
-    fn bit_len(&self) -> u8 {
-        match self {
-            P::C(value) => value.len() as u8,
-            P::D => 1,
-            P::W => 1,
-            P::S => 1,
-            P::Mod => 3,
-            P::Reg => 3,
-            P::Rm => 2,
-            P::Data => 8,
-            P::DataIfW => 8,
-            P::DataIfS => 8,
-            P::AddrLo => 8,
-            P::AddrHi => 8,
-            P::ImplD(_) => 0,
-            P::ImplRegBasedOnW(_, _) => 0,
-            P::OptDispLo => 8,
-            P::OptDispHi => 8,
-            P::ParseReg => 0,
-            P::ParseSecondOperand => 0,
-        }
-    }
-}
-
 /// Instruction definition.
 #[derive(Debug, Clone)]
 pub struct IxDef<'a> {
@@ -684,63 +659,6 @@ pub fn ix_table() -> [IxDef<'static>; 34] {
         IxDef::new("loopnz",  vec![C(bits!(static u8, Msb0; 1,1,1,0,0,0,0,0)), Data, ParseReg]),
         IxDef::new("jcxz",  vec![C(bits!(static u8, Msb0; 1,1,1,0,0,0,1,1)), Data, ParseReg]),
     ]
-}
-
-mod table_tests {
-    use super::*;
-
-    #[test]
-    fn test_bit_len_constants() {
-        // 0b100010 = 34 decimal => highest bit is the 6th from right
-        assert_eq!(P::C(bits!(static u8, Msb0; 1,1,1,1,1,1)).bit_len(), 6);
-
-        // 0b1 => 1 bit
-        assert_eq!(P::C(bits!(static u8, Msb0; 1)).bit_len(), 1);
-
-        // 0b0 => we treat 0 as at least 1 bit, per our .max(1) logic
-        assert_eq!(P::C(bits!(static u8, Msb0; 0)).bit_len(), 1);
-
-        // 0b0 => we treat 0 as at least 1 bit, per our .max(1) logic
-        assert_eq!(P::C(bits!(static u8, Msb0; 0, 0, 0)).bit_len(), 3);
-
-        // 0xFF => 8 bits
-        assert_eq!(
-            P::C(bits!(static u8, Msb0; 1, 1, 1 ,1 ,1, 1, 1, 1, )).bit_len(),
-            8
-        );
-
-        // 0b10000000 => 128 decimal => 8 bits
-        assert_eq!(
-            P::C(bits!(static u8, Msb0; 1, 0, 0 ,0 ,0, 0, 0, 0)).bit_len(),
-            8
-        );
-    }
-
-    #[test]
-    fn test_bit_len_flags() {
-        assert_eq!(P::D.bit_len(), 1);
-        assert_eq!(P::W.bit_len(), 1);
-    }
-
-    #[test]
-    fn test_bit_len_mod_reg_rm() {
-        assert_eq!(P::Mod.bit_len(), 3);
-        assert_eq!(P::Reg.bit_len(), 3);
-        assert_eq!(P::Rm.bit_len(), 2);
-    }
-
-    #[test]
-    fn test_bit_len_data() {
-        assert_eq!(P::Data.bit_len(), 8);
-        assert_eq!(P::DataIfW.bit_len(), 8);
-    }
-
-    #[test]
-    fn test_bit_len_impld() {
-        // ImplD doesn't consume bits
-        assert_eq!(P::ImplD(true).bit_len(), 0);
-        assert_eq!(P::ImplD(false).bit_len(), 0);
-    }
 }
 
 #[cfg(test)]
