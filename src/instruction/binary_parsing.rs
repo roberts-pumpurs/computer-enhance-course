@@ -338,7 +338,10 @@ enum P<'a> {
     DataHi,
     OptDispLo,
     OptDispHi,
+    DispLo,
+    DispHi,
     ImpliedRegOperand(Register),
+    ImpliedModRmOperand(Register),
     /// Instruction operates on word data
     ImpliedW(bool),
     /// This is set when the `D` flag == 1
@@ -347,11 +350,12 @@ enum P<'a> {
     // --
     // logical action of what to do with the data we parsed
     ParseRegField,
+    ParseModRmFromDisp,
     ParseRegFromData,
     ParseRegFromAddr,
     ParseModRm,
     /// don't do any operand parsing, return the ix
-    Finish,
+    Ret,
 }
 
 /// Instruction definition.
@@ -497,6 +501,14 @@ impl<'a> IxDef<'a> {
                         }
                     }
                 }
+                P::DispLo => {
+                    let slice = read_bits(8);
+                    ctx.disp_lo = Some(slice_to_val(slice));
+                }
+                P::DispHi => {
+                    let slice = read_bits(8);
+                    ctx.disp_hi = Some(slice_to_val(slice));
+                }
                 P::Data8 => {
                     let slice = read_bits(8);
                     let val = slice_to_val(slice);
@@ -515,6 +527,9 @@ impl<'a> IxDef<'a> {
                 P::ImpliedRegOperand(reg) => {
                     ctx.reg_operand = Some(Operand::Register(*reg));
                 }
+                P::ImpliedModRmOperand(reg) => {
+                    ctx.modrm_operand = Some(Operand::Register(*reg));
+                }
                 P::ParseRegField => {
                     // parse reg opernad
                     let reg_val = ctx.reg_val.unwrap();
@@ -525,6 +540,15 @@ impl<'a> IxDef<'a> {
                 P::ParseRegFromAddr => {
                     let addr = u16::from_le_bytes([ctx.addr_lo.unwrap(), ctx.addr_hi.unwrap()]);
                     ctx.reg_operand = Some(Operand::Address(EffectiveAddress::Direct(addr)));
+                }
+                P::ParseModRmFromDisp => {
+                    if ctx.w_val.unwrap() {
+                        let word = u16::from_le_bytes([ctx.disp_lo.unwrap(), ctx.data_hi.unwrap()]);
+                        ctx.reg_operand = Some(Operand::Immediate(Immediate::Word(word)));
+                    } else {
+                        ctx.reg_operand =
+                            Some(Operand::Immediate(Immediate::Byte(ctx.data_lo.unwrap())));
+                    };
                 }
                 P::ParseRegFromData => {
                     if ctx.w_val.unwrap() {
@@ -589,7 +613,7 @@ impl<'a> IxDef<'a> {
                     };
                     return Some((inst, &bytes[bytes_consumed..]));
                 }
-                P::Finish => {
+                P::Ret => {
                     let bytes_consumed = (bit_offset + 7) / 8; // round up
 
                     let inst = Instruction {
@@ -803,32 +827,32 @@ pub fn ix_table() -> [IxDef<'static>; 8] {
         and[3].clone(),
         and[4].clone(),
         and[5].clone(),
-        IxDef::new("es", vec![B(0x26), Finish]),
-        IxDef::new("daa", vec![B(0x27), Finish]),
+        IxDef::new("es", vec![B(0x26), Ret]),
+        IxDef::new("daa", vec![B(0x27), Ret]),
         sub[0].clone(),
         sub[1].clone(),
         sub[2].clone(),
         sub[3].clone(),
         sub[4].clone(),
         sub[5].clone(),
-        IxDef::new("cs", vec![B(0x2F), Finish]),
-        IxDef::new("das", vec![B(0x2F), Finish]),
+        IxDef::new("cs", vec![B(0x2F), Ret]),
+        IxDef::new("das", vec![B(0x2F), Ret]),
         xor[0].clone(),
         xor[1].clone(),
         xor[2].clone(),
         xor[3].clone(),
         xor[4].clone(),
         xor[5].clone(),
-        IxDef::new("ss", vec![B(0x36), Finish]),
-        IxDef::new("aaa", vec![B(0x37), Finish]),
+        IxDef::new("ss", vec![B(0x36), Ret]),
+        IxDef::new("aaa", vec![B(0x37), Ret]),
         cmp[0].clone(),
         cmp[1].clone(),
         cmp[2].clone(),
         cmp[3].clone(),
         cmp[4].clone(),
         cmp[5].clone(),
-        IxDef::new("ds", vec![B(0x3E), Finish]),
-        IxDef::new("aas", vec![B(0x3F), Finish]),
+        IxDef::new("ds", vec![B(0x3E), Ret]),
+        IxDef::new("aas", vec![B(0x3F), Ret]),
         // hex 3f
         inc[0].clone(),
         inc[1].clone(),
@@ -940,9 +964,40 @@ pub fn ix_table() -> [IxDef<'static>; 8] {
         IxDef::new("mov",  vec![B(0x8a), Mod, Reg, Rm, OptDispLo, OptDispHi, ImpliedW(false), ParseModRm, ParseRegField, DestinationIsInRegField]),
         IxDef::new("mov",  vec![B(0x8b), Mod, Reg, Rm, OptDispLo, OptDispHi, ImpliedW(true), ParseModRm, ParseRegField, DestinationIsInRegField]),
         IxDef::new("mov",  vec![B(0x8c), Mod, C(bits!(static u8, Msb0; 0)), SegReg, Rm, OptDispLo, OptDispHi, ImpliedW(true), ParseModRm, DestinationIsInModRmField]),
-        IxDef::new("mov",  vec![B(0x8c), Mod, C(bits!(static u8, Msb0; 1)), Finish, /* this is not a valid opcode */]), 
+        IxDef::new("...",  vec![B(0x8c), Mod, C(bits!(static u8, Msb0; 1)), /* this is not a valid opcode */]), 
         IxDef::new("lea",  vec![B(0x8d), Mod, Reg, Rm, OptDispLo, OptDispHi, ImpliedW(true), ParseModRm, ParseRegField, DestinationIsInRegField]),
-        IxDef::new("mov",  vec![B(0x8d), Mod, C(bits!(static u8, Msb0; 0)), SegReg, Rm, OptDispLo, OptDispHi, ImpliedW(true), ParseModRm, DestinationIsInRegField]),
+        IxDef::new("mov",  vec![B(0x8e), Mod, C(bits!(static u8, Msb0; 0)), SegReg, Rm, OptDispLo, OptDispHi, ImpliedW(true), ParseModRm, DestinationIsInRegField]),
+        IxDef::new("mov",  vec![B(0x8e), Mod, C(bits!(static u8, Msb0; 1)), Ret, /* this is not a valid opcode */]), 
+        IxDef::new("pop",  vec![B(0x8f), Mod, C(bits!(static u8, Msb0; 0,0,0)), Rm, OptDispLo, OptDispHi, ImpliedW(true), ParseModRm, DestinationIsInModRmField]),
+        IxDef::new("...",  vec![B(0x8f), Mod, C(bits!(static u8, Msb0; 0,0,1)), Rm, /* this is not a valid opcode */]),
+        IxDef::new("...",  vec![B(0x8f), Mod, C(bits!(static u8, Msb0; 0,1,0)), Rm, /* this is not a valid opcode */]),
+        IxDef::new("...",  vec![B(0x8f), Mod, C(bits!(static u8, Msb0; 0,1,1)), Rm, /* this is not a valid opcode */]),
+        IxDef::new("...",  vec![B(0x8f), Mod, C(bits!(static u8, Msb0; 1,0,0)), Rm, /* this is not a valid opcode */]),
+        IxDef::new("...",  vec![B(0x8f), Mod, C(bits!(static u8, Msb0; 1,0,1)), Rm, /* this is not a valid opcode */]),
+        IxDef::new("...",  vec![B(0x8f), Mod, C(bits!(static u8, Msb0; 1,1,0)), Rm, /* this is not a valid opcode */]),
+        IxDef::new("...",  vec![B(0x8f), Mod, C(bits!(static u8, Msb0; 1,1,1)), Rm, /* this is not a valid opcode */]),
+        IxDef::new("nop",  vec![B(0x90), Ret]),
+        IxDef::new("xchg", vec![B(0x91), ImpliedRegOperand(Register::Regular(Regular::AX)), ImpliedModRmOperand(Register::Regular(Regular::CX)), DestinationIsInRegField]),
+        IxDef::new("xchg", vec![B(0x92), ImpliedRegOperand(Register::Regular(Regular::AX)), ImpliedModRmOperand(Register::Regular(Regular::DX)), DestinationIsInRegField]),
+        IxDef::new("xchg", vec![B(0x93), ImpliedRegOperand(Register::Regular(Regular::AX)), ImpliedModRmOperand(Register::Regular(Regular::BX)), DestinationIsInRegField]),
+        IxDef::new("xchg", vec![B(0x94), ImpliedRegOperand(Register::Regular(Regular::AX)), ImpliedModRmOperand(Register::Regular(Regular::SP)), DestinationIsInRegField]),
+        IxDef::new("xchg", vec![B(0x95), ImpliedRegOperand(Register::Regular(Regular::AX)), ImpliedModRmOperand(Register::Regular(Regular::BP)), DestinationIsInRegField]),
+        IxDef::new("xchg", vec![B(0x96), ImpliedRegOperand(Register::Regular(Regular::AX)), ImpliedModRmOperand(Register::Regular(Regular::SI)), DestinationIsInRegField]),
+        IxDef::new("xchg", vec![B(0x97), ImpliedRegOperand(Register::Regular(Regular::AX)), ImpliedModRmOperand(Register::Regular(Regular::DI)), DestinationIsInRegField]),
+        IxDef::new("cbw",  vec![B(0x98), Ret]),
+        IxDef::new("cwd",  vec![B(0x99), Ret]),
+        // this is `call far_proc` -> real funky, implement handling with care
+        IxDef::new("call",   vec![B(0x9a), OptDispLo, OptDispHi, DataLo, DataHi, ImpliedW(true), ParseRegFromData, ParseModRmFromDisp, DestinationIsInRegField]),
+        IxDef::new("wait",   vec![B(0x9b), Ret]),
+        IxDef::new("pushf",  vec![B(0x9c), Ret]),
+        IxDef::new("popf",   vec![B(0x9d), Ret]),
+        IxDef::new("sahf",   vec![B(0x9e), Ret]),
+        IxDef::new("lahf",   vec![B(0x9f), Ret]),
+        // simple movs
+        IxDef::new("mov", vec![B(0xa0), AddrLo, AddrHi, ParseRegFromAddr, ImpliedModRmOperand(Register::Regular(Regular::AL)), DestinationIsInModRmField]),
+        IxDef::new("mov", vec![B(0xa1), AddrLo, AddrHi, ParseRegFromAddr, ImpliedModRmOperand(Register::Regular(Regular::AX)), DestinationIsInModRmField]),
+        IxDef::new("mov", vec![B(0xa2), AddrLo, AddrHi, ParseRegFromAddr, ImpliedModRmOperand(Register::Regular(Regular::AL)), DestinationIsInRegField]),
+        IxDef::new("mov", vec![B(0xa3), AddrLo, AddrHi, ParseRegFromAddr, ImpliedModRmOperand(Register::Regular(Regular::AL)), DestinationIsInRegField]),
     ];
     res
 }
